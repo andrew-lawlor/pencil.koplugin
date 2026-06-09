@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "fork-0.1.1"
+local PLUGIN_VERSION = "fork-0.1.2"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -4490,7 +4490,9 @@ function Pencil:strokeToSaveable(stroke)
         width = stroke.width,
         alpha = stroke.alpha,
         datetime = stroke.datetime,
-        points = stroke.points,
+        -- v4: points packed as a single "x y x y ..." string instead of an
+        -- array of {x=,y=} tables, so the serializer doesn't walk every point.
+        p = PencilGeometry.packPoints(stroke.points),
         color_name = stroke.color_name,  -- Save color name for persistence
         anchor = stroke.anchor,
         markup = stroke.markup,
@@ -4505,7 +4507,7 @@ end
 -- Stroke fields this version reads; anything else is kept as it was.
 local KNOWN_STROKE_FIELDS = {
     page = true, tool = true, width = true, alpha = true, datetime = true,
-    points = true, color_name = true, anchor = true, markup = true,
+    points = true, p = true, color_name = true, anchor = true, markup = true,
 }
 
 -- Convert saved stroke back to usable format
@@ -4531,6 +4533,16 @@ function Pencil:strokeFromSaved(saved)
         end
     end
 
+    -- Points: v4 stores a packed "x y ..." string in `p`; v3 and earlier store
+    -- an array of {x=,y=} tables in `points`. Reconstruct the in-memory
+    -- {x=,y=} array either way.
+    local points
+    if saved.p ~= nil then
+        points = PencilGeometry.unpackPoints(saved.p)
+    else
+        points = saved.points or {}
+    end
+
     return {
         page = saved.page,
         tool = saved.tool,
@@ -4539,7 +4551,7 @@ function Pencil:strokeFromSaved(saved)
         color_name = saved.color_name,
         alpha = saved.alpha or tool_settings.alpha,
         datetime = saved.datetime,
-        points = saved.points,
+        points = points,
         anchor = saved.anchor,
         markup = saved.markup,
         extra = extra,
@@ -4578,8 +4590,11 @@ function Pencil:saveStrokes()
         saveable_strokes[i] = self:strokeToSaveable(stroke)
     end
 
-    -- Serialize and write. Version 4 (lib/store): stable group ids and
-    -- anchored strokes; version 3 readers ignore the new fields.
+    -- Serialize and write. Version 5 (lib/store): each stroke's points packed
+    -- into one "x y x y ..." string (field `p`, from upstream PR #77, cutting
+    -- serialize time and file size on heavily-annotated books), stable group
+    -- ids and anchored strokes. Version 3 and earlier (a `points` array) still
+    -- load via strokeFromSaved's fallback.
     local data = {
         version = PencilStore.VERSION,
         strokes = saveable_strokes,
