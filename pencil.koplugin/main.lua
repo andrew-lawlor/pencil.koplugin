@@ -20,6 +20,9 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local PencilGeometry = require("lib/geometry")
 local PencilAnchor = require("lib/anchor")
 local PencilStore = require("lib/store")
+local PencilExport = require("lib/export")
+local PencilWords = require("lib/words")
+local JSON = require("json")
 local Screen = Device.screen
 local Size = require("ui/size")
 local InfoMessage = require("ui/widget/infomessage")
@@ -64,6 +67,12 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 -- Used by the bookmark-list hook (a class-level monkey-patch installed once)
 -- to find the live plugin without coupling to KOReader internals.
 local _active_pencil = nil
+
+-- Written into each markup export, so readers know what made it.
+local PLUGIN_VERSION = "fork-0.1.0"
+-- A pause this long after a stroke, on a page whose markup has no picture
+-- yet, takes it: the page is still on screen and the pen is resting.
+local MARKUP_CAPTURE_DELAY_S = 0.6
 local _bookmark_hook_installed = false
 
 local Pencil = InputContainer:extend{
@@ -148,6 +157,11 @@ function Pencil:init()
     self.page_strokes = {}  -- Index: page -> array of stroke indices
     self.annotation_groups = {}  -- Annotation groups for bookmark integration
     self.strokes_loaded = false  -- Set true after successful loadStrokes
+    -- Markup export (lib/export): the page visit new strokes belong to,
+    -- what was taken from the screen per markup, and what was last written.
+    self.visit = nil
+    self.markup_captures = {}
+    self.markup_written = {}
     self.undo_stack = {}
 
     -- Initialize highlighter color (yellow)
@@ -608,6 +622,8 @@ end
 
 -- Start a new stroke from raw input
 function Pencil:startRawStroke()
+    -- Never take a page picture while the pen is down.
+    self:cancelMarkupCapture()
     local page = self:getCurrentPage()
     local tool = self.side_button_down and TOOL_HIGHLIGHTER or self.current_tool
     local tool_settings = self.tool_settings[tool] or self.tool_settings[TOOL_PEN]
@@ -717,6 +733,7 @@ function Pencil:endRawStroke()
     end
     if self.current_stroke and #self.current_stroke.points >= 1 then
         self:anchorStroke(self.current_stroke)
+        self:assignMarkup(self.current_stroke)
         table.insert(self.strokes, self.current_stroke)
         self:indexStroke(#self.strokes, self.current_stroke.page)
         table.insert(self.undo_stack, { type = "add", stroke_idx = #self.strokes })
@@ -2691,6 +2708,7 @@ function Pencil:onDrawPanRelease(ges)
     if #self.current_stroke.points >= 1 then
         -- Finalize the stroke
         self:anchorStroke(self.current_stroke)
+        self:assignMarkup(self.current_stroke)
         table.insert(self.strokes, self.current_stroke)
         self:indexStroke(#self.strokes, self.current_stroke.page)
         self:saveStrokes()
@@ -2837,12 +2855,23 @@ function Pencil:backfillGroupXPointers()
             if group.xpointer_v2 and group.xpointer
                     and (group.image_rotation == nil or group.image_rotation == cur_rot)
                     and self.ui.document:getPageFromXPointer(group.xpointer) == cur_page then
+                local old_markup = nil
                 for _, idx in ipairs(group.stroke_indices or {}) do
                     local stroke = self.strokes[idx]
                     if stroke and not stroke.anchor then
                         self:anchorStroke(stroke)
                         if stroke.anchor then anchored = true end
                     end
+                    -- Ink from before the export: one markup per group,
+                    -- taken now that its page is on screen as drawn.
+                    if stroke and not stroke.markup then
+                        old_markup = old_markup or (group.id:gsub("^pencil_", "m_"))
+                        stroke.markup = old_markup
+                        anchored = true
+                    end
+                end
+                if old_markup then
+                    self:scheduleMarkupCapture({ id = old_markup, page = cur_page })
                 end
             end
         end
@@ -3995,6 +4024,202 @@ function Pencil:paintTo(bb, x, y)
 end
 
 -- Get the pencil strokes file path for this document
+-- ---- Markup export (lib/export) ------------------------------------------
+
+-- Puts a new stroke in the current page visit's markup, starting one if
+-- this is the first stroke since arriving on the page.
+function Pencil:assignMarkup(stroke)
+    if not stroke or stroke.markup then return end
+    if not self.visit or self.visit.page ~= stroke.page then
+        self.visit = { id = PencilExport.markupId(stroke), page = stroke.page }
+    end
+    stroke.markup = self.visit.id
+    self:scheduleMarkupCapture(self.visit)
+end
+
+function Pencil:cancelMarkupCapture()
+    if self.pending_markup_capture then
+        UIManager:unschedule(self.pending_markup_capture)
+        self.pending_markup_capture = nil
+    end
+end
+
+-- Takes the page picture and words for `target` ({id, page}) at the next
+-- pause, unless they were already taken.
+function Pencil:scheduleMarkupCapture(target)
+    if not target or self.markup_captures[target.id] then return end
+    self:cancelMarkupCapture()
+    local cb
+    cb = function()
+        if self.pending_markup_capture ~= cb then return end
+        self.pending_markup_capture = nil
+        local ok, err = pcall(self.captureMarkup, self, target)
+        if not ok then
+            logger.warn("Pencil: markup capture failed:", err)
+        end
+    end
+    self.pending_markup_capture = cb
+    UIManager:scheduleIn(MARKUP_CAPTURE_DELAY_S, cb)
+end
+
+-- Paints the page as shown, without this plugin's ink, in grey, and lists
+-- its words. Kept in memory; encoded when the markup is next written.
+function Pencil:captureMarkup(target)
+    if self.markup_captures[target.id] then return end
+    if self:getCurrentPage() ~= target.page then return end
+    -- While KOReader finishes laying the book out in the background, it
+    -- draws a progress icon and page numbers may still change: wait.
+    if self.ui.rolling and self.ui.rolling.rendering_state then
+        UIManager:scheduleIn(1, function() self:scheduleMarkupCapture(target) end)
+        return
+    end
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local bb = Blitbuffer.new(sw, sh, Blitbuffer.TYPE_BB8)
+    bb:fill(Blitbuffer.COLOR_WHITE)
+    self._capturing = true
+    local painted, err = pcall(self.view.paintTo, self.view, bb, 0, 0)
+    self._capturing = false
+    if not painted then
+        bb:free()
+        logger.warn("Pencil: painting the page for a markup failed:", err)
+        return
+    end
+    local capture = {
+        bb = bb,
+        page = target.page,
+        screen = { width = sw, height = sh, rotation = Screen:getRotationMode() },
+    }
+    if self.ui.rolling then
+        local words, first, last = PencilWords.onScreen(self.ui.document, sw, sh)
+        capture.words, capture.start, capture.finish = words, first, last
+        local conf = self.ui.document.configurable or {}
+        capture.layout = {
+            font_face = self.ui.font and self.ui.font.font_face,
+            font_size = conf.font_size,
+            line_spacing = conf.line_spacing,
+            h_page_margins = conf.h_page_margins,
+            t_page_margin = conf.t_page_margin,
+            b_page_margin = conf.b_page_margin,
+        }
+    end
+    if self.ui.toc and self.ui.toc.getTocTitleByPage then
+        local ok, title = pcall(self.ui.toc.getTocTitleByPage, self.ui.toc, target.page)
+        if ok and title and title ~= "" then capture.chapter = title end
+    end
+    self.markup_captures[target.id] = capture
+    -- Written (and the picture encoded) with the next deferred save.
+    self:scheduleDeferredWork()
+end
+
+function Pencil:getMarkupsDir()
+    local sidecar_dir = self.ui.doc_settings and self.ui.doc_settings.doc_sidecar_dir
+    return sidecar_dir and (sidecar_dir .. "/" .. PencilExport.DIR)
+end
+
+local function mkdirs(path)
+    local sofar = ""
+    for part in path:gmatch("[^/]+") do
+        sofar = sofar .. "/" .. part
+        if lfs.attributes(sofar, "mode") ~= "directory" then
+            lfs.mkdir(sofar)
+        end
+    end
+    return lfs.attributes(path, "mode") == "directory"
+end
+
+-- Writes `data` to `path` through a temporary file, so a reader never sees
+-- half of it.
+local function writeAtomic(path, data)
+    local tmp = path .. ".part"
+    local f, err = io.open(tmp, "wb")
+    if not f then return false, err end
+    f:write(data)
+    f:close()
+    return os.rename(tmp, path)
+end
+
+local function readJSON(path)
+    local f = io.open(path, "rb")
+    if not f then return nil end
+    local text = f:read("*a")
+    f:close()
+    local ok, data = pcall(JSON.decode, text)
+    return ok and data or nil
+end
+
+local function removeDir(path)
+    for entry in lfs.dir(path) do
+        if entry ~= "." and entry ~= ".." then
+            os.remove(path .. "/" .. entry)
+        end
+    end
+    lfs.rmdir(path)
+end
+
+-- Brings the export in line with the strokes: writes each markup whose ink
+-- changed (or whose picture is waiting), and removes those with no ink
+-- left. markup.json is always written last.
+function Pencil:syncMarkups()
+    local dir = self:getMarkupsDir()
+    if not dir or not self.strokes_loaded then return end
+    local ids = PencilExport.ids(self.strokes)
+    local live = {}
+    for _, id in ipairs(ids) do live[id] = true end
+    if #ids > 0 and not mkdirs(dir) then
+        logger.warn("Pencil: can't create", dir)
+        return
+    end
+    local document = {
+        doc_path = self.ui.document and self.ui.document.file,
+        partial_md5 = self.ui.doc_settings and self.ui.doc_settings:readSetting("partial_md5_checksum"),
+    }
+    for _, id in ipairs(ids) do
+        local strokes = PencilExport.strokesOf(self.strokes, id)
+        local signature = PencilExport.signature(strokes)
+        local capture = self.markup_captures[id]
+        local picture_waiting = capture and capture.bb ~= nil
+        if self.markup_written[id] ~= signature or picture_waiting then
+            local folder = dir .. "/" .. id
+            mkdirs(folder)
+            if picture_waiting then
+                local png = folder .. "/page.png"
+                local ok = pcall(capture.bb.writePNG, capture.bb, png .. ".part")
+                if ok and os.rename(png .. ".part", png) then
+                    capture.has_image = true
+                end
+                capture.bb:free()
+                capture.bb = nil
+                if capture.words then
+                    writeAtomic(folder .. "/words.json", JSON.encode({
+                        format = PencilExport.FORMAT, words = capture.words }))
+                end
+            end
+            writeAtomic(folder .. "/ink.json", JSON.encode(PencilExport.ink(strokes)))
+            -- Without a capture this session, keep what an earlier one found.
+            local previous = not capture and readJSON(folder .. "/markup.json") or nil
+            local taken = capture or (previous and {
+                page = previous.page, start = previous.start, finish = previous["end"],
+                chapter = previous.chapter, screen = previous.screen, layout = previous.layout,
+                has_image = previous.has_page_image,
+            })
+            writeAtomic(folder .. "/markup.json",
+                JSON.encode(PencilExport.markup(id, strokes, taken, document, PLUGIN_VERSION)))
+            self.markup_written[id] = signature
+        end
+    end
+    if lfs.attributes(dir, "mode") == "directory" then
+        for entry in lfs.dir(dir) do
+            local path = dir .. "/" .. entry
+            if entry:match("^m_") and not live[entry]
+                    and lfs.attributes(path, "mode") == "directory" then
+                removeDir(path)
+                self.markup_written[entry] = nil
+                self.markup_captures[entry] = nil
+            end
+        end
+    end
+end
+
 function Pencil:getStrokesFilePath()
     if not self.ui or not self.ui.doc_settings then
         logger.warn("Pencil: doc_settings not available")
@@ -4083,6 +4308,7 @@ function Pencil:strokeToSaveable(stroke)
         points = stroke.points,
         color_name = stroke.color_name,  -- Save color name for persistence
         anchor = stroke.anchor,
+        markup = stroke.markup,
     }
     -- Fields this version doesn't know (from a newer one) are kept.
     for k, v in pairs(stroke.extra or {}) do
@@ -4094,7 +4320,7 @@ end
 -- Stroke fields this version reads; anything else is kept as it was.
 local KNOWN_STROKE_FIELDS = {
     page = true, tool = true, width = true, alpha = true, datetime = true,
-    points = true, color_name = true, anchor = true,
+    points = true, color_name = true, anchor = true, markup = true,
 }
 
 -- Convert saved stroke back to usable format
@@ -4130,6 +4356,7 @@ function Pencil:strokeFromSaved(saved)
         datetime = saved.datetime,
         points = saved.points,
         anchor = saved.anchor,
+        markup = saved.markup,
         extra = extra,
     }
 end
@@ -4182,6 +4409,11 @@ function Pencil:saveStrokes()
     else
         logger.err("Pencil: failed to open file for writing:", filepath, "error:", err)
     end
+    -- The markup export follows the strokes; it must never break saving.
+    local ok, export_err = pcall(self.syncMarkups, self)
+    if not ok then
+        logger.warn("Pencil: markup export failed:", export_err)
+    end
 end
 
 -- Handle document close
@@ -4227,6 +4459,7 @@ function Pencil:onSuspend()
     -- Same idea as onCloseDocument: don't lose a freshly drawn annotation
     -- across a device sleep.
     self:flushPendingCaptures()
+    self:flushDeferredWork()
 end
 
 -- Handle reader ready (document fully loaded)
@@ -4290,6 +4523,9 @@ function Pencil:onPageUpdate(pageno)
     end
     self.current_stroke = nil
     self.eraser_deleted = nil
+    -- Leaving a page ends its visit: writing here again starts a new markup.
+    self.visit = nil
+    self:cancelMarkupCapture()
     -- Re-schedule capture for any group on the newly visible page that's
     -- still missing an image (e.g. user turned past the original page before
     -- the debounce fired).
