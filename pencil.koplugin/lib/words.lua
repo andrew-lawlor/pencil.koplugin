@@ -46,4 +46,26 @@ function Words.onScreen(doc, width, height)
     return words, first, last
 end
 
+--- The word nearest the point (x, y): the one whose box (any of its line
+-- boxes) is closest, 0 when the point is inside it. Returns the word and
+-- that box as {x, y, w, h}, or nil for no words. A plain loop: a page has a
+-- few hundred words, so this costs far less than asking the document.
+function Words.nearest(words, x, y)
+    local best, best_box, best_d
+    for _, w in ipairs(words or {}) do
+        for _, b in ipairs(w.boxes or {}) do
+            local dx = math.max(b[1] - x, 0, x - b[3])
+            local dy = math.max(b[2] - y, 0, y - b[4])
+            -- Vertical distance counts double: a margin note belongs with the
+            -- line beside it more than with the line above or below.
+            local d = dx * dx + 4 * dy * dy
+            if not best_d or d < best_d then
+                best, best_d = w, d
+                best_box = { x = b[1], y = b[2], w = b[3] - b[1], h = b[4] - b[2] }
+            end
+        end
+    end
+    return best, best_box
+end
+
 return Words

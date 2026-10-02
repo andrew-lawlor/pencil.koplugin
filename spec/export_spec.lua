@@ -100,6 +100,24 @@ describe("Words", function()
         assert.equals("w6", last)
     end)
 
+    it("finds the word nearest a point, favouring its own line", function()
+        local words = {
+            { text = "left", boxes = { { 0, 0, 100, 40 } } },
+            { text = "end", boxes = { { 110, 0, 300, 40 } } },
+            { text = "below", boxes = { { 0, 50, 300, 90 } } },
+        }
+        -- In the right margin, level with the first line.
+        local w, box = Words.nearest(words, 400, 20)
+        assert.equals("end", w.text)
+        assert.same({ x = 110, y = 0, w = 190, h = 40 }, box)
+        -- Inside a word.
+        assert.equals("below", (Words.nearest(words, 50, 60)).text)
+        -- A hyphenated word's second box counts too.
+        table.insert(words, { text = "split", boxes = { { 280, 100, 300, 140 }, { 0, 150, 60, 190 } } })
+        assert.equals("split", (Words.nearest(words, 10, 170)).text)
+        assert.is_nil(Words.nearest({}, 1, 1))
+    end)
+
     it("is empty without text on screen", function()
         local doc = fakeDoc({}, 1, 1)
         function doc:getTextFromPositions() return nil end
