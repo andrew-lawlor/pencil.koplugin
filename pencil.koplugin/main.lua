@@ -4073,6 +4073,7 @@ function Pencil:captureMarkup(target)
         UIManager:scheduleIn(1, function() self:scheduleMarkupCapture(target) end)
         return
     end
+    local started = time.now()
     local sw, sh = Screen:getWidth(), Screen:getHeight()
     local bb = Blitbuffer.new(sw, sh, Blitbuffer.TYPE_BB8)
     bb:fill(Blitbuffer.COLOR_WHITE)
@@ -4107,6 +4108,8 @@ function Pencil:captureMarkup(target)
         if ok and title and title ~= "" then capture.chapter = title end
     end
     self.markup_captures[target.id] = capture
+    logger.info(string.format("Pencil: captured markup %s (%d words) in %d ms",
+        target.id, capture.words and #capture.words or 0, time.to_ms(time.now() - started)))
     -- Written (and the picture encoded) with the next deferred save.
     self:scheduleDeferredWork()
 end
@@ -4183,7 +4186,10 @@ function Pencil:syncMarkups()
             mkdirs(folder)
             if picture_waiting then
                 local png = folder .. "/page.png"
+                local encode_started = time.now()
                 local ok = pcall(capture.bb.writePNG, capture.bb, png .. ".part")
+                logger.info(string.format("Pencil: encoded page.png for %s in %d ms",
+                    id, time.to_ms(time.now() - encode_started)))
                 if ok and os.rename(png .. ".part", png) then
                     capture.has_image = true
                 end
