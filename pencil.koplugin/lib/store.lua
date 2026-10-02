@@ -2,7 +2,9 @@
 The plugin's stroke store (`pencil_strokes.lua`): versions, stable group ids,
 and the upgrade from older files. Pure functions.
 
-Version 4 (this fork):
+Version 5 (this fork; upstream's unmerged PR #77 calls packed points
+version 4):
+- each stroke's points packed into one "x y x y ..." string (`p`);
 - group ids come from the group's first stroke (its time and first point),
   so they never change when groups are rebuilt after an erase or undo;
 - each stroke may carry an `anchor` (see lib/anchor), recorded when drawn;
@@ -13,7 +15,7 @@ Version 4 (this fork):
 
 local Store = {}
 
-Store.VERSION = 4
+Store.VERSION = 5
 
 --- The earliest stroke of a group (by time, then by index), or nil.
 function Store.firstStroke(group, strokes)
@@ -29,9 +31,21 @@ function Store.firstStroke(group, strokes)
     return best
 end
 
+--- A stroke's first point, from its `points` array or, as saved since
+-- version 4, its packed `p` string.
+function Store.firstPoint(stroke)
+    if not stroke then return nil end
+    if stroke.points and stroke.points[1] then return stroke.points[1] end
+    if type(stroke.p) == "string" then
+        local x, y = stroke.p:match("^%s*(%-?[%d.]+)%s+(%-?[%d.]+)")
+        if x then return { x = tonumber(x), y = tonumber(y) } end
+    end
+    return nil
+end
+
 --- A group id that depends only on the stroke it starts with.
 function Store.groupId(stroke)
-    local p = stroke and stroke.points and stroke.points[1]
+    local p = Store.firstPoint(stroke)
     local when = os.date("!%Y%m%d%H%M%S", stroke and stroke.datetime or 0)
     if not p then
         return "pencil_" .. when

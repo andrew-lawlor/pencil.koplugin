@@ -27,6 +27,11 @@ describe("Store", function()
             assert.are_not.equal(Store.groupId(stroke(1, 10, 10)), Store.groupId(stroke(1, 11, 10)))
         end)
 
+        it("reads the first point of a packed stroke", function()
+            local packed = { datetime = 1790966841, p = "224 1018 230 1020" }
+            assert.equals("pencil_20261002184721_224_1018", Store.groupId(packed))
+        end)
+
         it("copes with a stroke without points", function()
             assert.equals("pencil_19700101000005", Store.groupId({ datetime = 5, points = {} }))
         end)
