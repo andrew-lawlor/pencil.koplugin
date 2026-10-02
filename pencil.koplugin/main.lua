@@ -18,6 +18,8 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local PencilGeometry = require("lib/geometry")
+local PencilAnchor = require("lib/anchor")
+local PencilStore = require("lib/store")
 local Screen = Device.screen
 local Size = require("ui/size")
 local InfoMessage = require("ui/widget/infomessage")
@@ -714,6 +716,7 @@ function Pencil:endRawStroke()
             self.current_stroke and #self.current_stroke.points or 0))
     end
     if self.current_stroke and #self.current_stroke.points >= 1 then
+        self:anchorStroke(self.current_stroke)
         table.insert(self.strokes, self.current_stroke)
         self:indexStroke(#self.strokes, self.current_stroke.page)
         table.insert(self.undo_stack, { type = "add", stroke_idx = #self.strokes })
@@ -2687,6 +2690,7 @@ function Pencil:onDrawPanRelease(ges)
     -- Fallback: finalize stroke via gesture system
     if #self.current_stroke.points >= 1 then
         -- Finalize the stroke
+        self:anchorStroke(self.current_stroke)
         table.insert(self.strokes, self.current_stroke)
         self:indexStroke(#self.strokes, self.current_stroke.page)
         self:saveStrokes()
@@ -2728,6 +2732,22 @@ function Pencil:indexStroke(stroke_idx, page)
         self.page_strokes[page] = {}
     end
     table.insert(self.page_strokes[page], stroke_idx)
+end
+
+-- Anchor a stroke to the word nearest its centre (lib/anchor), while its
+-- page is on screen. Rolling documents only: a paged document's page
+-- numbers never change. Never fails the stroke.
+function Pencil:anchorStroke(stroke)
+    if not stroke or stroke.anchor or not self.ui.rolling then return end
+    local doc = self.ui.document
+    if not doc or not doc.getNearestWordAndBoxFromPosition then return end
+    local bbox = PencilGeometry.computeStrokeBbox(stroke)
+    if not bbox then return end
+    local ok, word = pcall(doc.getNearestWordAndBoxFromPosition, doc,
+        { x = (bbox.x0 + bbox.x1) / 2, y = (bbox.y0 + bbox.y1) / 2 })
+    if ok and word and word.pos0 and word.sbox then
+        stroke.anchor = PencilAnchor.fromWord(bbox, word.pos0, word.sbox)
+    end
 end
 
 -- Get an XPointer for a screen-space position on the current rolling-mode
@@ -2789,6 +2809,7 @@ function Pencil:backfillGroupXPointers()
     local cur_page = self:getCurrentPage()
     local cur_rot = Screen:getRotationMode()
     local cur_xp_top = nil
+    local anchored = false
     for _, group in ipairs(self.annotation_groups or {}) do
         if group.page == cur_page then
             local upgraded = false
@@ -2810,7 +2831,24 @@ function Pencil:backfillGroupXPointers()
                     self.image_data_dirty = true
                 end
             end
+            -- Strokes from older files have no anchor. While their group's
+            -- own XPointer still lands on this page, in the rotation it was
+            -- drawn in, the layout is the one they were drawn on.
+            if group.xpointer_v2 and group.xpointer
+                    and (group.image_rotation == nil or group.image_rotation == cur_rot)
+                    and self.ui.document:getPageFromXPointer(group.xpointer) == cur_page then
+                for _, idx in ipairs(group.stroke_indices or {}) do
+                    local stroke = self.strokes[idx]
+                    if stroke and not stroke.anchor then
+                        self:anchorStroke(stroke)
+                        if stroke.anchor then anchored = true end
+                    end
+                end
+            end
         end
+    end
+    if anchored then
+        self:scheduleDeferredWork()
     end
 end
 
@@ -2846,6 +2884,10 @@ function Pencil:assignStrokeToGroup(stroke_idx, skip_bookmark)
         table.insert(best_group.stroke_indices, stroke_idx)
         best_group.bbox = PencilGeometry.bboxUnion(best_group.bbox, bbox)
         best_group.datetime_last = math.max(best_group.datetime_last or 0, stroke_time)
+        if not best_group.xpointer and stroke.anchor and stroke.anchor.xpointer then
+            best_group.xpointer = stroke.anchor.xpointer
+            best_group.xpointer_v2 = true
+        end
         -- Update tool to majority
         local pen_count, hl_count = 0, 0
         for _, si in ipairs(best_group.stroke_indices) do
@@ -2866,7 +2908,9 @@ function Pencil:assignStrokeToGroup(stroke_idx, skip_bookmark)
     else
         -- Create new group
         local group = {
-            id = "pencil_" .. os.date("%Y%m%d%H%M%S") .. "_" .. stroke_idx,
+            -- Stable: from this stroke alone, never from when groups were
+            -- (re)built (lib/store).
+            id = PencilStore.groupId(stroke),
             page = stroke.page,
             stroke_indices = { stroke_idx },
             bbox = bbox,
@@ -2883,7 +2927,12 @@ function Pencil:assignStrokeToGroup(stroke_idx, skip_bookmark)
         -- process strokes from every page; for off-current-page strokes
         -- we skip the xpointer and let getGroupCurrentPage fall back to
         -- the saved group.page number. Backfill upgrades them later.
-        if stroke.page == self:getCurrentPage() then
+        -- The stroke's own anchor, recorded when it was drawn, survives any
+        -- rebuild; failing that, the text under the box, if on screen.
+        if stroke.anchor and stroke.anchor.xpointer then
+            group.xpointer = stroke.anchor.xpointer
+            group.xpointer_v2 = true
+        elseif stroke.page == self:getCurrentPage() then
             local annot_xp = self:getXPointerAtBboxCenter(bbox)
             if annot_xp then
                 group.xpointer = annot_xp
@@ -2917,6 +2966,13 @@ function Pencil:rebuildAnnotationGroups()
             self:cancelGroupImageCapture(group.id)
         end
 
+        -- Groups before the rebuild, by id: one that comes out the same
+        -- keeps its saved image (ids are stable, lib/store).
+        local before = {}
+        for _, group in ipairs(self.annotation_groups) do
+            before[group.id] = group
+        end
+
         self.annotation_groups = {}
 
         -- Build list of {index, datetime} sorted by datetime
@@ -2929,6 +2985,19 @@ function Pencil:rebuildAnnotationGroups()
         -- Re-assign each stroke
         for _, entry in ipairs(sorted) do
             self:assignStrokeToGroup(entry.idx)
+        end
+
+        for _, group in ipairs(self.annotation_groups) do
+            local old = before[group.id]
+            if PencilStore.sameGroup(old, group) then
+                self:cancelGroupImageCapture(group.id)
+                group.image_path = old.image_path
+                group.image_rotation = old.image_rotation
+            end
+            if old and not group.xpointer and old.xpointer_v2 then
+                group.xpointer = old.xpointer
+                group.xpointer_v2 = true
+            end
         end
     end)
     if not ok then
@@ -3964,6 +4033,9 @@ function Pencil:loadStrokes()
 
     local ok, data = pcall(dofile, filepath)
     if ok and data and data.strokes then
+        -- Older files get stable group ids (lib/store); saved as version 4
+        -- with the next save.
+        PencilStore.upgrade(data)
         -- Convert saved strokes back to usable format
         self.strokes = {}
         for i, saved in ipairs(data.strokes) do
@@ -4002,7 +4074,7 @@ end
 
 -- Convert stroke for saving (remove non-serializable values)
 function Pencil:strokeToSaveable(stroke)
-    return {
+    local saveable = {
         page = stroke.page,
         tool = stroke.tool,
         width = stroke.width,
@@ -4010,11 +4082,30 @@ function Pencil:strokeToSaveable(stroke)
         datetime = stroke.datetime,
         points = stroke.points,
         color_name = stroke.color_name,  -- Save color name for persistence
+        anchor = stroke.anchor,
     }
+    -- Fields this version doesn't know (from a newer one) are kept.
+    for k, v in pairs(stroke.extra or {}) do
+        if saveable[k] == nil then saveable[k] = v end
+    end
+    return saveable
 end
+
+-- Stroke fields this version reads; anything else is kept as it was.
+local KNOWN_STROKE_FIELDS = {
+    page = true, tool = true, width = true, alpha = true, datetime = true,
+    points = true, color_name = true, anchor = true,
+}
 
 -- Convert saved stroke back to usable format
 function Pencil:strokeFromSaved(saved)
+    local extra
+    for k, v in pairs(saved) do
+        if not KNOWN_STROKE_FIELDS[k] then
+            extra = extra or {}
+            extra[k] = v
+        end
+    end
     local tool = saved.tool or TOOL_PEN
     local tool_settings = self.tool_settings[tool] or self.tool_settings[TOOL_PEN]
 
@@ -4038,6 +4129,8 @@ function Pencil:strokeFromSaved(saved)
         alpha = saved.alpha or tool_settings.alpha,
         datetime = saved.datetime,
         points = saved.points,
+        anchor = saved.anchor,
+        extra = extra,
     }
 end
 
@@ -4073,11 +4166,10 @@ function Pencil:saveStrokes()
         saveable_strokes[i] = self:strokeToSaveable(stroke)
     end
 
-    -- Serialize and write. Version 3 marks files that may contain image_path /
-    -- image_rotation fields on annotation groups; older readers can ignore
-    -- those fields and continue to use the strokes directly.
+    -- Serialize and write. Version 4 (lib/store): stable group ids and
+    -- anchored strokes; version 3 readers ignore the new fields.
     local data = {
-        version = 3,
+        version = PencilStore.VERSION,
         strokes = saveable_strokes,
         annotation_groups = self.annotation_groups,
     }
