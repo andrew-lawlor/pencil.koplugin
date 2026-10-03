@@ -45,6 +45,18 @@ local TOOL_PEN = "pen"
 local TOOL_HIGHLIGHTER = "highlighter"
 local TOOL_ERASER = "eraser"
 
+-- How long the pen may leave the glass mid-highlight and carry on.
+local TEXT_HIGHLIGHT_LIFT_S = 0.3
+
+-- Whether two text positions are the same: XPointers (EPUB) are strings,
+-- PDF positions tables of page, x and y.
+local function samePosition(a, b)
+    if type(a) == "table" and type(b) == "table" then
+        return a.page == b.page and a.x == b.x and a.y == b.y
+    end
+    return a ~= nil and a == b
+end
+
 -- Color picker trigger settings
 local COLOR_PICKER_DELAY_MS = 500  -- How long pen must be held still (milliseconds)
 local COLOR_PICKER_TOLERANCE_PIXELS = 15  -- How many pixels pen can move while "still"
@@ -69,7 +81,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.1"
+local PLUGIN_VERSION = "0.6.2"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -450,9 +462,12 @@ function Pencil:handleStylusSlot(input, slot)
         if current_slot_id >= 0 and not self.highlighting then
             self:startTextHighlight(slot.x or 0, slot.y or 0)
         elseif current_slot_id >= 0 and self.highlighting then
+            -- Back on the glass soon after a lift (the pen skipped): the
+            -- same selection carries on.
+            self:cancelTextHighlightFinish()
             self:extendTextHighlight(slot.x or 0, slot.y or 0)
         elseif current_slot_id < 0 and self.highlighting then
-            self:finishTextHighlight()
+            self:scheduleTextHighlightFinish()
         end
         return true
     end
@@ -839,7 +854,10 @@ function Pencil:_paintTempSelection()
         local page_key = rh.hold_pos and rh.hold_pos.page or 1
         temp[page_key] = rh.selected_text.sboxes
     end
-    UIManager:setDirty(self.ui.dialog or self.ui.view, "ui")
+    -- The fast waveform: KOReader waits on UI refreshes on MediaTek Kobos,
+    -- which made the selection lag behind the pen. It's refreshed properly
+    -- when the highlight is saved.
+    UIManager:setDirty(self.ui.dialog or self.ui.view, "fast")
 end
 
 -- Clear the in-progress selection preview. Called on pen lift before we
@@ -887,6 +905,8 @@ function Pencil:startTextHighlight(raw_x, raw_y)
     end
 
     self.highlighting = true
+    -- The side button was used: releasing it mustn't toggle pen/eraser.
+    self.side_button_used_for_highlight = true
     -- Prevent the drawing-path pen-down branch from also firing on subsequent
     -- events for this contact.
     self.pen_down = true
@@ -914,10 +934,47 @@ function Pencil:extendTextHighlight(raw_x, raw_y)
     local ok, selected = pcall(self.ui.document.getTextFromPositions,
                                self.ui.document, rh.hold_pos, rh.holdpan_pos)
     if ok and selected and selected.pos0 and selected.pos1 then
+        local before = rh.selected_text
         rh.selected_text = selected
-        -- Repaint preview with the new sboxes.
-        self:_paintTempSelection()
+        -- Repaint only when the selection reaches another word: the pen
+        -- reports far more often than that.
+        if not (before and samePosition(before.pos0, selected.pos0)
+                and samePosition(before.pos1, selected.pos1)) then
+            self:_paintTempSelection()
+        end
     end
+end
+
+-- Saves the highlight a moment after the pen lifts, so a pen that skips off
+-- the glass mid-drag doesn't split one highlight into several.
+function Pencil:scheduleTextHighlightFinish()
+    if self.pending_highlight_finish then return end
+    local action
+    action = function()
+        if self.pending_highlight_finish ~= action then return end
+        self.pending_highlight_finish = nil
+        self:finishTextHighlight()
+    end
+    self.pending_highlight_finish = action
+    UIManager:scheduleIn(TEXT_HIGHLIGHT_LIFT_S, action)
+end
+
+function Pencil:cancelTextHighlightFinish()
+    if self.pending_highlight_finish then
+        UIManager:unschedule(self.pending_highlight_finish)
+        self.pending_highlight_finish = nil
+    end
+end
+
+-- Whether the book already has a highlight from pos0 to pos1.
+function Pencil:highlightExists(pos0, pos1)
+    local annotations = self.ui and self.ui.annotation and self.ui.annotation.annotations
+    for _, item in ipairs(annotations or {}) do
+        if item.drawer and samePosition(item.pos0, pos0) and samePosition(item.pos1, pos1) then
+            return true
+        end
+    end
+    return false
 end
 
 -- Persist the current selection as a KOReader highlight annotation and reset.
@@ -931,6 +988,9 @@ function Pencil:finishTextHighlight()
     -- path (drawSavedHighlight) will take over on the next frame.
     self:_clearTempSelection()
 
+    if has_selection and self:highlightExists(rh.selected_text.pos0, rh.selected_text.pos1) then
+        has_selection = false
+    end
     if has_selection then
         -- saveHighlight(false) builds the annotation item from self.selected_text
         -- and calls self.ui.annotation:addItem(item) internally, handling the
@@ -947,6 +1007,7 @@ function Pencil:finishTextHighlight()
         pcall(rh.clear, rh)
     end
 
+    self:cancelTextHighlightFinish()
     self.highlighting = false
     self.pen_down = false
 end
