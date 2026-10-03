@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "fork-0.1.4"
+local PLUGIN_VERSION = "fork-0.2.0"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -659,6 +659,10 @@ function Pencil:startRawStroke()
         self.side_button_used_for_highlight = true
     end
 
+    -- Black pen ink can be shown with the fast waveform (see refreshInk).
+    self.ink_fast = tool == TOOL_PEN
+        and (tool_settings.color_name == nil or tool_settings.color_name == "Black")
+        and not Screen.night_mode
     self.current_stroke = {
         page = page,
         tool = tool,
@@ -744,8 +748,7 @@ function Pencil:addRawPoint(x, y)
             local ry = math.max(0, math.floor(r.y))
             local rw = math.min(Screen:getWidth() - rx, math.ceil(r.w))
             local rh = math.min(Screen:getHeight() - ry, math.ceil(r.h))
-            -- Use UI refresh mode for proper color rendering on color e-ink
-            Screen:refreshUI(rx, ry, rw, rh)
+            self:refreshInk(rx, ry, rw, rh)
             self.dirty_region = nil
         end
     end
@@ -797,7 +800,23 @@ function Pencil:flushDirtyRegion()
     local rw = math.min(Screen:getWidth() - rx, math.ceil(r.w))
     local rh = math.min(Screen:getHeight() - ry, math.ceil(r.h))
     if rw > 0 and rh > 0 then
-        Screen:refreshUI(rx, ry, rw, rh)
+        self:refreshInk(rx, ry, rw, rh)
+    end
+end
+
+-- Shows freshly drawn ink. Black pen ink uses the fast waveform (DU): on
+-- MediaTek Kobos (the Libra Colour), KOReader waits for every other partial
+-- update to be accepted by the display controller, which holds it back
+-- while an earlier, overlapping update (~250 ms for the UI waveform) is
+-- still running: that wait was the pen's lag. Fast updates are never
+-- waited on, and black on white is what DU is for. Colours, grey and the
+-- highlighter need the UI waveform; everything gets a clean UI refresh
+-- once writing stops (scheduleDelayedRefresh).
+function Pencil:refreshInk(x, y, w, h)
+    if self.ink_fast then
+        Screen:refreshFast(x, y, w, h)
+    else
+        Screen:refreshUI(x, y, w, h)
     end
 end
 
@@ -1820,8 +1839,10 @@ function Pencil:scheduleDelayedRefresh()
             local rw = bbox.x1 - bbox.x0
             local rh = bbox.y1 - bbox.y0
             if rw > 0 and rh > 0 then
-                local region = Geom:new{ x = bbox.x0, y = bbox.y0, w = rw, h = rh }
-                UIManager:setDirty(self.view, "fast", region)
+                -- The ink is already in the screen buffer: only its waveform
+                -- needs upgrading (anti-aliasing, colour), not a repaint of
+                -- the page.
+                Screen:refreshUI(bbox.x0, bbox.y0, rw, rh)
             else
                 UIManager:setDirty(self.view, "fast")
             end
@@ -1854,6 +1875,10 @@ function Pencil:scheduleDeferredWork()
     local action
     action = function()
         if self.pending_save == action then self.pending_save = nil end
+        -- Never under the pen: try again once the stroke is done.
+        if self.current_stroke then
+            return self:scheduleDeferredWork()
+        end
         self:flushDirtyGroups()
         self:saveStrokes()
     end
@@ -3434,6 +3459,10 @@ function Pencil:scheduleGroupImageCapture(group, delay)
 
     local cb = function()
         self.pending_image_captures[group.id] = nil
+        -- Never under the pen: try again in a moment.
+        if self.current_stroke then
+            return self:scheduleGroupImageCapture(group, 2)
+        end
         -- The group might have been deleted by the eraser by now.
         local current = nil
         for _, g in ipairs(self.annotation_groups) do
@@ -4277,6 +4306,9 @@ function Pencil:scheduleIdleExport(delay)
     cb = function()
         if self.pending_idle_export ~= cb then return end
         self.pending_idle_export = nil
+        if self.current_stroke then
+            return self:scheduleIdleExport(2)
+        end
         local ok, err = pcall(self.syncMarkups, self)
         if not ok then
             logger.warn("Pencil: markup export failed:", err)
