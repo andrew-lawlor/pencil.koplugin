@@ -17,6 +17,9 @@ local time = require("ui/time")
 local Profile = {}
 
 local THRESHOLD_MS = 15
+-- For this long after a book opens, everything is traced: every screen
+-- update, repaint request, slow timer run and input gesture.
+local TRACE_S = 120
 
 -- Functions timed on their own (if the plugin has them).
 local SLOW = {
@@ -30,6 +33,26 @@ function Profile.install(class, label)
     label = label or "Pencil"
     local stroke = nil
     local function ms(t) return time.to_ms(time.now() - t) end
+    -- The trace window starts when a book is ready.
+    local opened = nil
+    local function tracing()
+        return opened and time.to_s(time.now() - opened) < TRACE_S
+    end
+    local function stamp()
+        return opened and string.format("+%.3fs", time.to_s(time.now() - opened)) or "+?"
+    end
+    local ready = class.onReaderReady
+    if ready then
+        class.onReaderReady = function(self, ...)
+            opened = time.now()
+            logger.info(string.format("%s trace: book ready, tracing %d s", label, TRACE_S))
+            return ready(self, ...)
+        end
+    end
+    local function where(fn)
+        local info = type(fn) == "function" and debug.getinfo(fn, "S")
+        return info and string.format("%s:%d", info.short_src:match("[^/]*/?[^/]*$") or info.short_src, info.linedefined) or "?"
+    end
 
     local start = class.startRawStroke
     if start then
@@ -81,9 +104,10 @@ function Profile.install(class, label)
                 local t = time.now()
                 local a, b = f(scr, x, y, w, h, ...)
                 local d = ms(t)
-                if d >= 10 then
-                    logger.info(string.format("%s timing: Screen:%s %sx%s took %d ms%s", label, name,
-                        tostring(w), tostring(h), d,
+                local tiny = (tonumber(w) or 9999) <= 64 and (tonumber(h) or 9999) <= 64
+                if d >= 10 or (tracing() and not (stroke and tiny)) then
+                    logger.info(string.format("%s timing: %s Screen:%s %sx%s at %s,%s took %d ms%s", label, stamp(), name,
+                        tostring(w), tostring(h), tostring(x), tostring(y), d,
                         stroke and string.format(" (during a stroke, point %d)", stroke.points) or ""))
                 end
                 return a, b
@@ -94,13 +118,45 @@ function Profile.install(class, label)
     local UIManager = require("ui/uimanager")
     local set_dirty = UIManager.setDirty
     UIManager.setDirty = function(um, widget, refreshtype, region, ...)
-        if stroke then
+        if stroke or tracing() then
             local info = debug.getinfo(2, "Sl")
             local mode = type(refreshtype) == "function" and "deferred" or tostring(refreshtype)
-            logger.info(string.format("%s timing: repaint requested during a stroke (point %d), mode %s, from %s:%s",
-                label, stroke.points, mode, info and info.short_src or "?", info and info.currentline or "?"))
+            logger.info(string.format("%s timing: %s repaint requested%s, mode %s, region %s, widget %s, from %s:%s",
+                label, stamp(), stroke and string.format(" during a stroke (point %d)", stroke.points) or "",
+                mode, region and string.format("%dx%d", region.w or 0, region.h or 0) or "whole",
+                widget and (widget.name or widget.id or "?") or "nil",
+                info and info.short_src or "?", info and info.currentline or "?"))
         end
         return set_dirty(um, widget, refreshtype, region, ...)
+    end
+    -- Timers: which ran, and how long the loop took, when it took long.
+    local check = UIManager._checkTasks
+    UIManager._checkTasks = function(um, ...)
+        local due = {}
+        if tracing() then
+            local now = time.now()
+            for _, task in ipairs(um._task_queue or {}) do
+                if task.time <= now then table.insert(due, where(task.action)) end
+            end
+        end
+        local t = time.now()
+        local a, b = check(um, ...)
+        local d = ms(t)
+        if #due > 0 and d >= 5 then
+            logger.info(string.format("%s timing: %s timers took %d ms%s: %s", label, stamp(), d,
+                stroke and " (during a stroke)" or "", table.concat(due, ", ")))
+        end
+        return a, b
+    end
+    -- Input: every gesture KOReader recognises while tracing (palm or pen).
+    local handle = UIManager.handleInputEvent
+    UIManager.handleInputEvent = function(um, ev, ...)
+        if tracing() and type(ev) == "table" and ev.handler == "onGesture" then
+            local ges = ev.args and ev.args[1]
+            logger.info(string.format("%s timing: %s gesture %s%s", label, stamp(),
+                ges and tostring(ges.ges) or "?", stroke and " (during a stroke)" or ""))
+        end
+        return handle(um, ev, ...)
     end
     for _, name in ipairs(SLOW) do
         local f = class[name]
