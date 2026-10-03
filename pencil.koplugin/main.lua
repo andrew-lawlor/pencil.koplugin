@@ -4770,4 +4770,10 @@ function Pencil:onUpdatePos()
     self:backfillMissingImages()
 end
 
+-- Device trials only (lib/profile): off in releases.
+local PROFILE = false
+if PROFILE then
+    require("lib/profile").install(Pencil, "Pencil")
+end
+
 return Pencil
