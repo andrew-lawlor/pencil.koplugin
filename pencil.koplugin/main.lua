@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.0"
+local PLUGIN_VERSION = "0.6.1"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -1842,7 +1842,7 @@ function Pencil:scheduleDelayedRefresh()
                 -- The ink is already in the screen buffer: only its waveform
                 -- needs upgrading (anti-aliasing, colour), not a repaint of
                 -- the page.
-                Screen:refreshUI(bbox.x0, bbox.y0, rw, rh)
+                self:sharpenInk(bbox.x0, bbox.y0, rw, rh)
             else
                 UIManager:setDirty(self.view, "fast")
             end
@@ -1855,6 +1855,22 @@ function Pencil:scheduleDelayedRefresh()
     end
     self.pending_refresh = action
     UIManager:scheduleIn(self.refresh_delay_ms / 1000, action)
+end
+
+-- Redraws ink drawn with the fast waveform properly, once writing stops.
+-- A partial refresh only updates pixels that changed since the last one,
+-- and the fast refresh already sent these, so on a black-and-white screen
+-- (the Elipsa 2E) it leaves the ink as it was. A full-mode update with the
+-- partial (REAGL) waveform redraws every pixel in the region without a
+-- flash. Colour screens process every update and sharpen with the usual
+-- one (the Libra Colour).
+function Pencil:sharpenInk(x, y, w, h)
+    if Device:hasColorScreen() then
+        Screen:refreshUI(x, y, w, h)
+    else
+        Screen:refreshFlashPartial(x, y, w, h)
+    end
+    logger.dbg("Pencil: sharpened ink", x, y, w, h)
 end
 
 -- Cancel pending refresh (called when new stroke starts)
@@ -4173,7 +4189,14 @@ function Pencil:assignMarkup(stroke)
     end
     stroke.markup = self.visit.id
     if self.page_capture and self.page_capture.page == stroke.page then
-        self:attachPageCapture()
+        -- The page was taken before this markup began (the reader paused
+        -- before writing). The stroke isn't in the page's list yet, so
+        -- attachPageCapture wouldn't find it: give it the capture here.
+        if not self.markup_captures[stroke.markup] then
+            self.markup_captures[stroke.markup] = self.page_capture
+            self.page_capture.used = true
+            self:scheduleIdleExport()
+        end
     else
         -- Not taken yet (the pen beat it): once the pen rests.
         self:schedulePageCapture(PAGE_CAPTURE_PEN_REST_S)
