@@ -8,8 +8,9 @@ This is a maintained fork of [mysticknits/pencil.koplugin](https://github.com/my
 
 - **A responsive pen on the Libra Colour.** Black ink is drawn with the display's fast waveform while you write, then sharpened in one pass when you pause. The ink no longer stalls mid-word ([details](#performance)).
 - **Smaller, faster saves.** Strokes are saved once after you stop writing, not after nearly every stroke, in a format about six times smaller. These two fixes come from the original author's unmerged [pull request #77](https://github.com/mysticknits/pencil.koplugin/pull/77), carried over with thanks.
-- **Notes stay tied to the text.** Each stroke records the word it was written beside, so erasing or undoing no longer loses where a group of strokes belongs, and a group keeps the same id through edits.
-- **Markup export.** Each visit to a page you write on is saved as a folder with your ink, a clean picture of the page, and every word on it with its position, so apps such as [Kollate](https://github.com/andrew-lawlor/kollate) can turn your handwriting into searchable notes. See [the format](docs/markup-export.md).
+- **Ink follows the text.** Each stroke records the word it was written beside. Change the font, its size or the margins, and your notes are drawn beside their words on whatever page those are on now, while underlines and circles are drawn again under and around the words they mark, however the passage wraps. Change back and the ink is exactly as you wrote it.
+- **The pen menu.** Tool (pen, highlight, eraser), colour and width in one place, opened by a gesture of your choice. With the Highlight tool, dragging across text makes a KOReader highlight.
+- **Markup export.** Each visit to a page you write on is saved as a folder with your ink, a clean picture of the page, and every word on it with its position, so apps such as [Kollate](https://github.com/andrew-lawlor/kollate) can turn your handwriting into searchable notes, with what you underlined or circled as the book's exact words. See [the format](docs/markup-export.md).
 - **Nothing slow near the pen.** Page pictures are taken when you arrive on a page, and encoding and writing wait until you've been idle for a few seconds.
 
 ## Performance
