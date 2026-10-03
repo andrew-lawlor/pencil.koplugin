@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "fork-0.2.0"
+local PLUGIN_VERSION = "0.6.0"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen

@@ -1,16 +1,55 @@
-# pencil.koplugin
+# Pencil for KOReader (maintained fork)
 
-## Information
+Write in the margins of your books with a stylus, in [KOReader](https://koreader.rocks/) on a Kobo.
 
-This has been tested on:
+This is a maintained fork of [mysticknits/pencil.koplugin](https://github.com/mysticknits/pencil.koplugin), which made all of this possible and hasn't been updated since May 2026. It's a drop-in replacement: same plugin folder, same menus, and your existing ink comes with you. On top of the original it makes the pen responsive on colour Kobos, saves faster, keeps your notes anchored to the text, and exports each page you write on in a documented format other apps can read.
 
-- Kobo Libra Colour/Kobo Stylus 2/Epub format
+## What's new in this fork
 
-**This will currently only work on Kobo devices! I will attempt to add other device support by request and at a later date**
+- **A responsive pen on the Libra Colour.** Black ink is drawn with the display's fast waveform while you write, then sharpened in one pass when you pause. The ink no longer stalls mid-word ([details](#performance)).
+- **Smaller, faster saves.** Strokes are saved once after you stop writing, not after nearly every stroke, in a format about six times smaller. These two fixes come from the original author's unmerged [pull request #77](https://github.com/mysticknits/pencil.koplugin/pull/77), carried over with thanks.
+- **Notes stay tied to the text.** Each stroke records the word it was written beside, so erasing or undoing no longer loses where a group of strokes belongs, and a group keeps the same id through edits.
+- **Markup export.** Each visit to a page you write on is saved as a folder with your ink, a clean picture of the page, and every word on it with its position, so apps such as [Kollate](https://github.com/andrew-lawlor/kollate) can turn your handwriting into searchable notes. See [the format](docs/markup-export.md).
+- **Nothing slow near the pen.** Page pictures are taken when you arrive on a page, and encoding and writing wait until you've been idle for a few seconds.
 
-If you resize your book while reading it, your annotations will be WONKY. This is something I will eventually address but for now, get your book set before you start writing.
+## Performance
 
-### Compatible with Koreader - Snowflake
+Measured on a Kobo Libra Colour with KOReader 2026.07.1, writing normally for a minute or two, with the fork's built-in profiler (`lib/profile.lua`).
+
+![Pen latency, one dot per stroke: the original plugin's slowest point per stroke has a median of 12 ms, with 2 of 63 strokes over 150 ms; this fork's median is 3 ms, with none of 44 over 150 ms](docs/latency.png)
+
+| | Original (0.5.0) | This fork (0.6.0) |
+|---|---|---|
+| Slowest point per stroke, median | 12 ms | **3 ms** |
+| Slowest point per stroke, 90th percentile | 43 ms | 61 ms |
+| Strokes where the ink stalled for over 150 ms | 2 of 63 | **0 of 44** |
+| Strokes file for the same 204 strokes | 1,256 KB | **199 KB** |
+| Full saves in the busiest minute of writing | 59 | **8** |
+
+![The strokes file for the same 204 strokes: 1,256 KB in the original format, 199 KB packed; full saves in the busiest minute: 59 with the original's saving, 8 in the fork](docs/storage.png)
+
+**Why the pen stalled.** On MediaTek-based Kobos such as the Libra Colour, KOReader waits for the display controller to accept every partial refresh drawn with the normal UI waveform, and the controller holds an update back while an earlier, overlapping one is still running, about a quarter of a second. The pen refreshes its ink every 16 ms over overlapping areas, so now and then a refresh blocked for that long and the ink stopped following the pen. Refreshes with the fast waveform aren't waited on, and black ink on white is what that waveform is for. The trade-off: while you write, ink looks slightly jagged, and it sharpens when you pause. Coloured pens, grey, the highlighter and night mode keep the normal waveform.
+
+**The 90th percentile is a little higher** in the fork because the first point of a stroke after a pause can wait about 60 ms while the display wakes up.
+
+## Requirements
+
+- A Kobo with a stylus. Tested on the **Kobo Libra Colour** with the Kobo Stylus 2, with EPUB books.
+- **KOReader 2026.07 or newer.** Older versions aren't supported.
+
+## Installation
+
+1. Download `pencil.koplugin.zip` from the [latest release](https://github.com/andrew-lawlor/pencil.koplugin/releases/latest) and unzip it.
+2. Connect your Kobo by USB and copy the `pencil.koplugin` folder into `.adds/koreader/plugins/`, replacing the original plugin's folder if you have it.
+3. Eject, and restart KOReader.
+
+### input.lua
+
+The original plugin asks you to replace KOReader's `frontend/device/input.lua` with the one in this repository, so the plugin can tell the stylus from your fingers and detect the eraser end. KOReader 2026.07 includes that stylus support itself, so the fork should work without the replacement, but that hasn't been confirmed on a device yet: this release was tested with this repository's `input.lua` in place. If the pen doesn't draw, copy `input.lua` (also attached to the release) over `.adds/koreader/frontend/device/input.lua`, keeping a copy of the original. Note that a KOReader update puts the original back.
+
+### Coming from the original plugin
+
+Your ink is upgraded the first time the fork saves each book's strokes: nothing is lost, and the strokes file becomes much smaller. The original plugin can't read the new format, so if you might go back, copy your books' `.sdr` folders somewhere safe first.
 
 ## Features
 
@@ -24,12 +63,6 @@ If you resize your book while reading it, your annotations will be WONKY. This i
 - **Enable/disable toggle**: Turn the plugin on or off via the menu or a mapped gesture
 - **Per-document storage**: Annotations are saved with each book
 - **Input debug mode**: Log raw stylus events to help diagnose detection issues
-
-## Instructions for Installation
-
-1. Download both the `pencil.koplugin` directory and the `input.lua` file from this repository.
-2. Replace the `/frontend/device/input.lua` with the downloaded file. This enables the plugin to intercept the stylus input, separate it from touch inputs, and detect the eraser end.
-3. Copy the `pencil.koplugin` directory into the `/plugins` directory of KOReader.
 
 ## Configuring the Pencil Plugin
 
@@ -80,13 +113,29 @@ When enabled, the plugin automatically groups your pencil strokes into logical a
 - Your pencil strokes and drawings are not affected — only the bookmarks are removed
 - Annotation groups are still tracked internally, so you won't lose any grouping data if you turn it back on
 
-## Features In the Pipeline
+## Markup export
 
-1. Export of annotations
-2. Handling changing canvas size
+Each page you write on gets a folder in the book's settings folder, `<book>.sdr/pencil/markups/<id>/`:
+
+| File | What it holds |
+|---|---|
+| `markup.json` | When and where: times, the first and last positions on the page, chapter, screen and layout. Written last. |
+| `ink.json` | Your strokes, in page pixels and in the order you wrote them, each with the word it's anchored to |
+| `page.png` | The page as it looked, in grey, without your ink |
+| `words.json` | Every word on the page with its box and position in the book |
+
+The full format is in [docs/markup-export.md](docs/markup-export.md).
+
+## Development
+
+Tests run with [busted](https://lunarmodules.github.io/busted/) on Lua 5.1: `busted spec/`. New logic lives in small modules under `pencil.koplugin/lib/` so it can be tested without KOReader. To measure on a device, set `PROFILE = true` at the end of `main.lua`: timings go to KOReader's `crash.log`.
 
 ## Acknowledgements
 
+The original plugin is by [mysticknits](https://github.com/mysticknits). This fork carries over their unmerged pull request #77 (save and refresh fixes, packed strokes).
+
 Eraser end detection based on techniques from [eraser.koplugin](https://github.com/SimonLiu423/eraser.koplugin) by SimonLiu.
 
-xoxo
+## Licence
+
+AGPL-3.0, as the original. See [LICENSE](LICENSE).
