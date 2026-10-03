@@ -34,7 +34,7 @@ function Profile.install(class, label)
     local start = class.startRawStroke
     if start then
         class.startRawStroke = function(self, ...)
-            stroke = { points = 0, draw_ms = 0, max_draw = 0, last = time.now(), max_gap = 0, t0 = time.now() }
+            stroke = { points = 0, draw_ms = 0, max_draw = 0, worst_at = 0, last = time.now(), max_gap = 0, t0 = time.now() }
             return start(self, ...)
         end
     end
@@ -51,7 +51,7 @@ function Profile.install(class, label)
                 local d = ms(t)
                 stroke.points = stroke.points + 1
                 stroke.draw_ms = stroke.draw_ms + d
-                if d > stroke.max_draw then stroke.max_draw = d end
+                if d > stroke.max_draw then stroke.max_draw = d; stroke.worst_at = stroke.points end
                 stroke.last = time.now()
             end
             return r
@@ -64,12 +64,30 @@ function Profile.install(class, label)
             local r = finish(self, ...)
             if stroke then
                 logger.info(string.format(
-                    "%s timing: stroke %d points over %d ms, longest gap %d ms, drawing %d ms (worst point %d ms), finishing %d ms",
+                    "%s timing: stroke %d points over %d ms, longest gap %d ms, drawing %d ms (worst point %d ms, point %d), finishing %d ms",
                     label, stroke.points, time.to_ms(t - stroke.t0), stroke.max_gap,
-                    stroke.draw_ms, stroke.max_draw, ms(t)))
+                    stroke.draw_ms, stroke.max_draw, stroke.worst_at, ms(t)))
             end
             stroke = nil
             return r
+        end
+    end
+    -- Screen refreshes: an e-ink update can block until an earlier one ends.
+    local Screen = require("device").screen
+    for _, name in ipairs({ "refreshUI", "refreshFast", "refreshPartial", "refreshFull", "refreshFlash" }) do
+        local f = Screen[name]
+        if type(f) == "function" then
+            Screen[name] = function(scr, x, y, w, h, ...)
+                local t = time.now()
+                local a, b = f(scr, x, y, w, h, ...)
+                local d = ms(t)
+                if d >= 10 then
+                    logger.info(string.format("%s timing: Screen:%s %sx%s took %d ms%s", label, name,
+                        tostring(w), tostring(h), d,
+                        stroke and string.format(" (during a stroke, point %d)", stroke.points) or ""))
+                end
+                return a, b
+            end
         end
     end
     for _, name in ipairs(SLOW) do

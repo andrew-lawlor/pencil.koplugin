@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "fork-0.1.2"
+local PLUGIN_VERSION = "fork-0.1.3"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -775,9 +775,26 @@ function Pencil:endRawStroke()
             self:writeDebugLog("endRawStroke: NOT SAVED (no current_stroke or no points)")
         end
     end
+    -- Show the end of the stroke now: points drawn since the last periodic
+    -- refresh would otherwise stay invisible until writing stops.
+    self:flushDirtyRegion()
     self.current_stroke = nil
     -- Schedule delayed refresh for clean display after writing stops
     self:scheduleDelayedRefresh()
+end
+
+-- Refreshes the part of the screen drawn on since the last refresh.
+function Pencil:flushDirtyRegion()
+    local r = self.dirty_region
+    if not r then return end
+    self.dirty_region = nil
+    local rx = math.max(0, math.floor(r.x))
+    local ry = math.max(0, math.floor(r.y))
+    local rw = math.min(Screen:getWidth() - rx, math.ceil(r.w))
+    local rh = math.min(Screen:getHeight() - ry, math.ceil(r.h))
+    if rw > 0 and rh > 0 then
+        Screen:refreshUI(rx, ry, rw, rh)
+    end
 end
 
 -- Paint the in-progress text selection as "invert" rectangles while a
@@ -4250,7 +4267,7 @@ end
 
 -- Writes the export once the reader has been idle for EXPORT_IDLE_S:
 -- rescheduled by every stroke and page turn.
-function Pencil:scheduleIdleExport()
+function Pencil:scheduleIdleExport(delay)
     self:cancelIdleExport()
     local cb
     cb = function()
@@ -4262,7 +4279,7 @@ function Pencil:scheduleIdleExport()
         end
     end
     self.pending_idle_export = cb
-    UIManager:scheduleIn(EXPORT_IDLE_S, cb)
+    UIManager:scheduleIn(delay or EXPORT_IDLE_S, cb)
 end
 
 function Pencil:getMarkupsDir()
@@ -4325,8 +4342,12 @@ end
 -- Brings the export in line with the strokes: writes each markup whose ink
 -- changed (or whose picture is waiting), and removes those with no ink
 -- left. markup.json is always written last.
-function Pencil:syncMarkups()
+-- With `all`, every waiting picture is encoded (closing the book, sleep);
+-- otherwise one per run, so an idle pause never freezes for long, and the
+-- rest follow at later pauses.
+function Pencil:syncMarkups(all)
     local dir = self:getMarkupsDir()
+    local encoded, more = 0, false
     if not dir or not self.strokes_loaded then return end
     local ids = PencilExport.ids(self.strokes)
     local live = {}
@@ -4345,6 +4366,11 @@ function Pencil:syncMarkups()
         local capture = self.markup_captures[id]
         local picture_waiting = capture and not self.markup_has_image[id]
             and (capture.bb or capture.png_path)
+        if picture_waiting and not capture.png_path and encoded > 0 and not all then
+            -- Another picture was encoded this run: this one waits.
+            more = true
+            picture_waiting = false
+        end
         if self.markup_written[id] ~= signature or picture_waiting then
             local folder = dir .. "/" .. id
             mkdirs(folder)
@@ -4356,6 +4382,7 @@ function Pencil:syncMarkups()
                     ok = copyFile(capture.png_path, png .. ".part")
                 else
                     local encode_started = time.now()
+                    encoded = encoded + 1
                     ok = pcall(capture.bb.writePNG, capture.bb, png .. ".part")
                     logger.info(string.format("Pencil: encoded page.png for %s in %d ms",
                         id, time.to_ms(time.now() - encode_started)))
@@ -4402,6 +4429,9 @@ function Pencil:syncMarkups()
                 self.markup_has_image[entry] = nil
             end
         end
+    end
+    if more then
+        self:scheduleIdleExport(2)
     end
 end
 
@@ -4647,7 +4677,7 @@ function Pencil:onCloseDocument()
     -- And the export, now rather than at idle.
     self:cancelPageCapture()
     self:cancelIdleExport()
-    local ok, err = pcall(self.syncMarkups, self)
+    local ok, err = pcall(self.syncMarkups, self, true)
     if not ok then logger.warn("Pencil: markup export failed:", err) end
     self:releasePageCapture()
     for _, capture in pairs(self.markup_captures) do
@@ -4667,7 +4697,7 @@ function Pencil:onSuspend()
     self:flushPendingCaptures()
     self:flushDeferredWork()
     self:cancelIdleExport()
-    local ok, err = pcall(self.syncMarkups, self)
+    local ok, err = pcall(self.syncMarkups, self, true)
     if not ok then logger.warn("Pencil: markup export failed:", err) end
 end
 
