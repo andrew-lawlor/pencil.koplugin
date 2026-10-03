@@ -588,55 +588,6 @@ describe("color picker widget", function()
         assert.is_nil(pencil.color_picker_widget)
     end)
 
-    describe("item list gating (experimental pen width)", function()
-
-        it("includes only colors when experimental_pen_width is off", function()
-            local pencil = createMockPencil({ experimental_pen_width = false })
-
-            local items = pencil:buildPickerItems()
-
-            assert.equals(#pencil.available_colors, #items)
-            for _, item in ipairs(items) do
-                assert.equals("color", item.kind)
-            end
-        end)
-
-        it("always includes the full color list regardless of flag", function()
-            -- Black must not be omitted or shadowed by width items when the
-            -- experimental flag is on — the width row is strictly additive.
-            local off = createMockPencil({ experimental_pen_width = false })
-            local on = createMockPencil({ experimental_pen_width = true })
-
-            local function color_names(items)
-                local names = {}
-                for _, item in ipairs(items) do
-                    if item.kind == "color" then
-                        table.insert(names, item.name)
-                    end
-                end
-                return names
-            end
-
-            assert.same(color_names(off:buildPickerItems()), color_names(on:buildPickerItems()))
-        end)
-
-        it("appends width items only when experimental_pen_width is on", function()
-            local pencil = createMockPencil({ experimental_pen_width = true })
-
-            local items = pencil:buildPickerItems()
-
-            assert.equals(
-                #pencil.available_colors + #pencil.available_widths,
-                #items
-            )
-            -- Width items live at the tail of the list, after colors
-            local tail = items[#items]
-            assert.equals("width", tail.kind)
-            assert.equals(9, tail.width_value)
-        end)
-
-    end)
-
 end)
 
 

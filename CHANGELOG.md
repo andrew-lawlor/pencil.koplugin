@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.2 (2026-10-03)
+
+### New
+
+- **The pen menu:** the tool (pen, highlight, eraser), the pen's colour and its width in one place. Open it with a gesture of your choice (map **Pencil: pen menu** in the Gesture manager) or from the Pencil menu. It replaces the experimental colour and width pickers. Holding the pen still can still open it, but that's off by default: a pause while writing opened it too.
+- **Highlight text with the pen:** choose Highlight in the pen menu (or map **Pencil: select highlight**), then drag across text to make a KOReader highlight. The selection shows inverted while you drag. If the pen skips off the glass mid-drag, the same highlight carries on, and dragging over a highlight that already exists doesn't add another.
+
+### Changed
+
+- Highlighting text with the stylus side button held (the experimental "Text highlight (side button)") is gone: it made several highlights from one drag, lagged behind the pen, and switched the pen to the eraser when the button was let go. The Highlight tool replaces it.
+- Choosing in the pen menu shows no message: the message kept the pen from writing for a second.
+
+### Fixed
+
+- Drawing a highlighter stroke with the side button held could switch the pen to the eraser when the button was let go: KOReader reports the button after the stroke has begun.
+
 ## 0.6.1 (2026-10-03)
 
 - Fixed: writing on a page after pausing on it (once its picture had been taken) exported that markup without `page.png`, `words.json` or its page details. Markups missing them are completed the next time their page is shown.

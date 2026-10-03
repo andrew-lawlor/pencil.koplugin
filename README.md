@@ -53,7 +53,9 @@ Your ink is upgraded the first time the fork saves each book's strokes: nothing 
 
 - **Pen tip**: Draw annotations on your ebooks
 - **Eraser end**: Flip your stylus over to erase strokes instantly
-- **Highlighter**: Hold the stylus side button and drag to highlight; tap the side button to toggle pencil/eraser
+- **Pen menu**: Choose the tool (pen, highlight or eraser), the pen's colour and its width. Open it from a gesture you choose (below), or from the Pencil menu
+- **Highlight text**: With the Highlight tool, drag the pen across text to make a KOReader highlight, as with a long press and Highlight
+- **Highlighter**: Hold the stylus side button and draw for a highlighter stroke; tap the side button to toggle pencil/eraser
 - **Swap Eraser/Highlighter**: Reassign which side button acts as eraser vs. highlighter from the menu
 - **Undo**: Undo your last stroke or eraser action
 - **Clear strokes**: Clear annotations for the current page or the entire document
@@ -66,10 +68,12 @@ Your ink is upgraded the first time the fork saves each book's strokes: nothing 
 
 1. Enable the plugin from the Pencil menu (Top menu > More tools > Pencil > Enabled)
 2. If your stylus's side button mapping is reversed, toggle **Swap Eraser and Highlighter** in the Pencil menu
-3. Optionally map actions to gestures in Gesture Manager:
+3. Map **Pencil: pen menu** to a gesture (Top menu > Settings > Taps and gestures > Gesture manager), such as a two-finger tap or a corner tap, to open the pen menu from the page. The menu appears in the middle of the screen; tap a tool, colour or width, or tap outside it to close it
+4. Optionally map other actions to gestures:
    - **Pencil: toggle on/off** — enable or disable the plugin
    - **Pencil: toggle pencil/eraser** — switch between tools
    - **Pencil: select pencil** — switch to pencil
+   - **Pencil: select highlight** — switch to highlighting text
    - **Pencil: select eraser** — switch to eraser
    - **Pencil: undo** — undo last stroke or eraser action
 
@@ -82,17 +86,7 @@ If you're experiencing issues with the plugin, please enable input debug mode in
 
 Some features are still in development and are hidden behind an experimental toggle. You can find them under **Pencil menu > Experimental**.
 
-### Color picker
-
-When enabled, holding the pen still on the page opens a picker with 10 color options. When disabled, the pen stays on its last-saved color.
-
-**To enable:** Pencil menu > Experimental > Color picker
-
-### Pen width picker
-
-When enabled, the picker also shows pen width options (3, 5, 7, 9), rendered as black bars whose height previews the stroke thickness. **Requires the color picker to also be enabled.**
-
-**To enable:** Pencil menu > Experimental > Pen width picker
+(The original's colour and width pickers, opened by holding the pen still, are now the pen menu. Holding the pen still can still open it: **Pencil menu > Open the pen menu by holding the pen still**, off by default because a pause while writing opens it too.)
 
 ### Bookmark Sync
 
