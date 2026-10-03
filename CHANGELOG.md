@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 (2026-10-03)
+
+- Fixed: writing on a page after pausing on it (once its picture had been taken) exported that markup without `page.png`, `words.json` or its page details. Markups missing them are completed the next time their page is shown.
+- Tried on the Kobo Elipsa 2E: the pen, markup export and page pictures (1404×1872) work as on the Libra Colour.
+
 ## 0.6.0 (2026-10-02)
 
 The first release of the maintained fork, continuing from the original plugin's 0.5.0.

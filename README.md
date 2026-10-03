@@ -34,7 +34,7 @@ Measured on a Kobo Libra Colour with KOReader 2026.07.1, writing normally for a 
 
 ## Requirements
 
-- A Kobo with a stylus. Tested on the **Kobo Libra Colour** with the Kobo Stylus 2, with EPUB books.
+- A Kobo with a stylus. Tested on the **Kobo Libra Colour** and the **Kobo Elipsa 2E** with the Kobo Stylus 2, with EPUB books.
 - **KOReader 2026.07 or newer.** Older versions aren't supported. KOReader's own files stay as they are: unlike the original plugin, the fork doesn't need a replacement `input.lua`.
 
 ## Installation
