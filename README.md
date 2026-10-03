@@ -1,12 +1,12 @@
 # Pencil for KOReader (maintained fork)
 
-Write in the margins of your books with a stylus, in [KOReader](https://koreader.rocks/) on a Kobo.
+Write in the margins of your books with a stylus, in [KOReader](https://koreader.rocks/) on a stylus Kobo: the Libra Colour, Elipsa 2E, Elipsa or Sage.
 
-This is a maintained fork of [mysticknits/pencil.koplugin](https://github.com/mysticknits/pencil.koplugin), which made all of this possible and hasn't been updated since May 2026. It's a drop-in replacement: same plugin folder, same menus, and your existing ink comes with you. On top of the original it makes the pen responsive on colour Kobos, saves faster, keeps your notes anchored to the text, and exports each page you write on in a documented format other apps can read.
+This is a maintained fork of [mysticknits/pencil.koplugin](https://github.com/mysticknits/pencil.koplugin), which made all of this possible and hasn't been updated since May 2026. It's a drop-in replacement: same plugin folder, same menus, and your existing ink comes with you. On top of the original it keeps the pen from stalling, saves faster, keeps your notes anchored to the text, and exports each page you write on in a documented format other apps can read.
 
 ## What's new in this fork
 
-- **A responsive pen on the Libra Colour.** Black ink is drawn with the display's fast waveform while you write, then sharpened in one pass when you pause. The ink no longer stalls mid-word ([details](#performance)).
+- **A responsive pen.** On some Kobos, the Libra Colour among them, the ink could stall mid-word. Black ink is now drawn with the display's fast waveform while you write, then sharpened in one pass when you pause ([details](#performance)).
 - **Smaller, faster saves.** Strokes are saved once after you stop writing, not after nearly every stroke, in a format about six times smaller. These two fixes come from the original author's unmerged [pull request #77](https://github.com/mysticknits/pencil.koplugin/pull/77), carried over with thanks.
 - **Ink follows the text.** Each stroke records the word it was written beside. Change the font, its size or the margins, and your notes are drawn beside their words on whatever page those are on now, while underlines and circles are drawn again under and around the words they mark, however the passage wraps. Change back and the ink is exactly as you wrote it.
 - **The pen menu.** Tool (pen, highlight, eraser), colour and width in one place, opened by a gesture of your choice. With the Highlight tool, dragging across text makes a KOReader highlight.
@@ -35,7 +35,7 @@ Measured on a Kobo Libra Colour with KOReader 2026.07.1, writing normally for a 
 
 ## Requirements
 
-- A Kobo with a stylus. Tested on the **Kobo Libra Colour** and the **Kobo Elipsa 2E** with the Kobo Stylus 2, with EPUB books.
+- A Kobo with a stylus: the Libra Colour, Elipsa 2E, Elipsa or Sage. Tested on the **Libra Colour** and the **Elipsa 2E** with the Kobo Stylus 2, with EPUB books; reports from the Elipsa and Sage are welcome.
 - **KOReader 2026.07 or newer.** Older versions aren't supported. KOReader's own files stay as they are: unlike the original plugin, the fork doesn't need a replacement `input.lua`.
 
 ## Installation
