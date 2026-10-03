@@ -23,6 +23,7 @@ local PencilAnchor = require("lib/anchor")
 local PencilStore = require("lib/store")
 local PencilExport = require("lib/export")
 local PencilWords = require("lib/words")
+local PencilRefit = require("lib/refit")
 local PenMenu = require("lib/penmenu")
 local JSON = require("json")
 local Screen = Device.screen
@@ -2638,6 +2639,9 @@ function Pencil:anchorStroke(stroke)
     if word then
         stroke.anchor = PencilAnchor.fromWord(bbox, word.pos0, box, self:textColumn())
     end
+    -- An underline or circle: the words it marks, so it can be drawn under
+    -- or around them on another layout (lib/refit).
+    stroke.mark = stroke.mark or PencilRefit.markOf(bbox, capture.words)
 end
 
 -- Get an XPointer for a screen-space position on the current rolling-mode
@@ -3883,6 +3887,17 @@ function Pencil:shownStrokes(page)
     if next(elsewhere) then
         local column = self:textColumn()
         local W, H = Screen:getWidth(), Screen:getHeight()
+        -- Underlines and circles are drawn again under or around their
+        -- words, wherever those are now (lib/refit).
+        for idx in pairs(elsewhere) do
+            local stroke = self.strokes[idx]
+            if stroke.mark then
+                elsewhere[idx] = nil
+                for _, points in ipairs(self:fittedMark(stroke, page)) do
+                    table.insert(list, { idx, setmetatable({ points = points }, { __index = stroke }) })
+                end
+            end
+        end
         local function move(indices)
             -- The group's first anchored stroke places it.
             local ref
@@ -3931,6 +3946,38 @@ function Pencil:shownStrokes(page)
     end
     self._shown = { key = key, page = page, list = list }
     return list
+end
+
+-- A mark stroke drawn again on `page` of the current layout: one point list
+-- per line its words are on here (none when they're on another page).
+function Pencil:fittedMark(stroke, page)
+    local doc, mark = self.ui.document, stroke.mark
+    local ok0, p0 = pcall(doc.getPageFromXPointer, doc, mark.pos0)
+    local ok1, p1 = pcall(doc.getPageFromXPointer, doc, mark.pos1)
+    if not ((ok0 and p0 == page) or (ok1 and p1 == page)) then return {} end
+    local ok, boxes = pcall(doc.getScreenBoxesFromPositions, doc, mark.pos0, mark.pos1, true)
+    if not ok or not boxes then return {} end
+    -- The words' boxes on screen, one per line.
+    local H = Screen:getHeight()
+    local lines = {}
+    for _, b in ipairs(boxes) do
+        if b.y >= 0 and b.y + b.h <= H then
+            local cy = b.y + b.h / 2
+            local line
+            for _, l in ipairs(lines) do
+                if l[2] <= cy and cy <= l[4] then line = l; break end
+            end
+            if line then
+                line[1], line[3] = math.min(line[1], b.x), math.max(line[3], b.x + b.w)
+                line[2], line[4] = math.min(line[2], b.y), math.max(line[4], b.y + b.h)
+            else
+                table.insert(lines, { b.x, b.y, b.x + b.w, b.y + b.h })
+            end
+        end
+    end
+    local bbox = PencilGeometry.computeStrokeBbox(stroke)
+    if not bbox or #lines == 0 then return {} end
+    return PencilRefit.fit(mark, stroke.points, bbox, lines)
 end
 
 -- KOReader finished laying the book out again: ink positions may change.
@@ -4157,6 +4204,12 @@ function Pencil:attachPageCapture()
         end
         if here and stroke.markup and self.markup_captures[stroke.markup] == capture and not stroke.anchor then
             self:anchorStroke(stroke)
+        end
+        -- Ink from before marks were recorded: what it marks, now that its
+        -- page is on screen as written.
+        if here and stroke.mark == nil and capture.words and self.ui.rolling then
+            local bbox = PencilGeometry.computeStrokeBbox(stroke)
+            stroke.mark = bbox and PencilRefit.markOf(bbox, capture.words) or false
         end
     end
     if attached then
@@ -4447,6 +4500,7 @@ function Pencil:strokeToSaveable(stroke)
         anchor = stroke.anchor,
         markup = stroke.markup,
         layout = stroke.layout,
+        mark = stroke.mark or nil,
     }
     -- Fields this version doesn't know (from a newer one) are kept.
     for k, v in pairs(stroke.extra or {}) do
@@ -4459,7 +4513,7 @@ end
 local KNOWN_STROKE_FIELDS = {
     page = true, tool = true, width = true, alpha = true, datetime = true,
     points = true, p = true, color_name = true, anchor = true, markup = true,
-    layout = true,
+    layout = true, mark = true,
 }
 
 -- Convert saved stroke back to usable format
@@ -4507,6 +4561,7 @@ function Pencil:strokeFromSaved(saved)
         anchor = saved.anchor,
         markup = saved.markup,
         layout = saved.layout,
+        mark = saved.mark,
         extra = extra,
     }
 end

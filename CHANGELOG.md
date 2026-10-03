@@ -4,7 +4,7 @@
 
 ### New
 
-- **Ink follows the text after a font change.** Change the font, its size, the spacing or the margins, and your notes are drawn beside the words they were written beside, on whatever page those words are on now, instead of at their old position on a page that now shows other text. Each note moves as a whole, so handwriting keeps its shape; notes in a margin stay in it, as far from the text. Change back and the ink is exactly as you wrote it. You can erase moved ink where you see it. Underlines and circles move with their word too, for now; fitting them to their words in the new layout comes next.
+- **Ink follows the text after a font change.** Change the font, its size, the spacing or the margins, and your notes are drawn beside the words they were written beside, on whatever page those words are on now, instead of at their old position on a page that now shows other text. Each note moves as a whole, so handwriting keeps its shape; notes in a margin stay in it, as far from the text. Change back and the ink is exactly as you wrote it. You can erase moved ink where you see it. Underlines and circles are drawn again under and around the words they mark: a passage that wraps differently gets an underline on each of its lines, and a circled word keeps its circle wherever it lands. They're redrawn from your own stroke, stretched to fit, so they still look hand-drawn.
 
 ### Notes
 
