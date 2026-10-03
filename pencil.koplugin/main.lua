@@ -1842,7 +1842,7 @@ function Pencil:scheduleDelayedRefresh()
                 -- The ink is already in the screen buffer: only its waveform
                 -- needs upgrading (anti-aliasing, colour), not a repaint of
                 -- the page.
-                self:sharpenInk(bbox.x0, bbox.y0, rw, rh)
+                Screen:refreshUI(bbox.x0, bbox.y0, rw, rh)
             else
                 UIManager:setDirty(self.view, "fast")
             end
@@ -1855,22 +1855,6 @@ function Pencil:scheduleDelayedRefresh()
     end
     self.pending_refresh = action
     UIManager:scheduleIn(self.refresh_delay_ms / 1000, action)
-end
-
--- Redraws ink drawn with the fast waveform properly, once writing stops.
--- A partial refresh only updates pixels that changed since the last one,
--- and the fast refresh already sent these, so on a black-and-white screen
--- (the Elipsa 2E) it leaves the ink as it was. A full-mode update with the
--- partial (REAGL) waveform redraws every pixel in the region without a
--- flash. Colour screens process every update and sharpen with the usual
--- one (the Libra Colour).
-function Pencil:sharpenInk(x, y, w, h)
-    if Device:hasColorScreen() then
-        Screen:refreshUI(x, y, w, h)
-    else
-        Screen:refreshFlashPartial(x, y, w, h)
-    end
-    logger.dbg("Pencil: sharpened ink", x, y, w, h)
 end
 
 -- Cancel pending refresh (called when new stroke starts)
