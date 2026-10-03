@@ -69,7 +69,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "fork-0.1.3"
+local PLUGIN_VERSION = "fork-0.1.4"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -644,9 +644,13 @@ end
 
 -- Start a new stroke from raw input
 function Pencil:startRawStroke()
-    -- Nothing slow while the pen is down.
+    -- Nothing slow while the pen is down, and no repaint under it: a
+    -- clean-up refresh still pending from the last stroke would start an
+    -- e-ink update that the next ink refresh has to wait for (~250 ms on a
+    -- Libra Colour). It's scheduled again when this stroke ends.
     self:cancelPageCapture()
     self:cancelIdleExport()
+    self:cancelPendingRefresh()
     local page = self:getCurrentPage()
     local tool = self.side_button_down and TOOL_HIGHLIGHTER or self.current_tool
     local tool_settings = self.tool_settings[tool] or self.tool_settings[TOOL_PEN]

@@ -90,6 +90,18 @@ function Profile.install(class, label)
             end
         end
     end
+    -- Anything asking for a repaint while the pen is down, and from where.
+    local UIManager = require("ui/uimanager")
+    local set_dirty = UIManager.setDirty
+    UIManager.setDirty = function(um, widget, refreshtype, region, ...)
+        if stroke then
+            local info = debug.getinfo(2, "Sl")
+            local mode = type(refreshtype) == "function" and "deferred" or tostring(refreshtype)
+            logger.info(string.format("%s timing: repaint requested during a stroke (point %d), mode %s, from %s:%s",
+                label, stroke.points, mode, info and info.short_src or "?", info and info.currentline or "?"))
+        end
+        return set_dirty(um, widget, refreshtype, region, ...)
+    end
     for _, name in ipairs(SLOW) do
         local f = class[name]
         if type(f) == "function" then
