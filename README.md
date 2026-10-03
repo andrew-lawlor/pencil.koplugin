@@ -35,7 +35,7 @@ Measured on a Kobo Libra Colour with KOReader 2026.07.1, writing normally for a 
 ## Requirements
 
 - A Kobo with a stylus. Tested on the **Kobo Libra Colour** with the Kobo Stylus 2, with EPUB books.
-- **KOReader 2026.07 or newer.** Older versions aren't supported.
+- **KOReader 2026.07 or newer.** Older versions aren't supported. KOReader's own files stay as they are: unlike the original plugin, the fork doesn't need a replacement `input.lua`.
 
 ## Installation
 
@@ -43,11 +43,9 @@ Measured on a Kobo Libra Colour with KOReader 2026.07.1, writing normally for a 
 2. Connect your Kobo by USB and copy the `pencil.koplugin` folder into `.adds/koreader/plugins/`, replacing the original plugin's folder if you have it.
 3. Eject, and restart KOReader.
 
-### input.lua
-
-The original plugin asks you to replace KOReader's `frontend/device/input.lua` with the one in this repository, so the plugin can tell the stylus from your fingers and detect the eraser end. KOReader 2026.07 includes that stylus support itself, so the fork should work without the replacement, but that hasn't been confirmed on a device yet: this release was tested with this repository's `input.lua` in place. If the pen doesn't draw, copy `input.lua` (also attached to the release) over `.adds/koreader/frontend/device/input.lua`, keeping a copy of the original. Note that a KOReader update puts the original back.
-
 ### Coming from the original plugin
+
+If you replaced KOReader's `input.lua` for the original plugin, you can leave it: the fork works with either. A KOReader update puts the stock file back.
 
 Your ink is upgraded the first time the fork saves each book's strokes: nothing is lost, and the strokes file becomes much smaller. The original plugin can't read the new format, so if you might go back, copy your books' `.sdr` folders somewhere safe first.
 

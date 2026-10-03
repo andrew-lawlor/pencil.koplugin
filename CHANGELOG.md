@@ -15,6 +15,7 @@ The first release of the maintained fork, continuing from the original plugin's 
 
 - Each stroke is anchored to the word it was written beside, and a group of strokes keeps a stable id through erasing and undoing.
 - Markup export: each page you write on gets a folder with your ink, a picture of the page and every word on it with its position. See [docs/markup-export.md](docs/markup-export.md).
+- No replacement `input.lua`: KOReader 2026.07's own stylus support is enough, pen, eraser end and stylus button included.
 - A profiler for measuring on a device (`lib/profile.lua`, off by default).
 - Tests for the stroke store and the export (`busted spec/`).
 
