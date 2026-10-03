@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.3 (unreleased)
+
+### New
+
+- **Ink follows the text after a font change.** Change the font, its size, the spacing or the margins, and your notes are drawn beside the words they were written beside, on whatever page those words are on now, instead of at their old position on a page that now shows other text. Each note moves as a whole, so handwriting keeps its shape; notes in a margin stay in it, as far from the text. Change back and the ink is exactly as you wrote it. You can erase moved ink where you see it. Underlines and circles move with their word too, for now; fitting them to their words in the new layout comes next.
+
+### Notes
+
+- Each stroke now records the layout it was written in. Ink from before this version is taken to be in the layout the book opens in, which is right unless you changed the font after writing.
+
 ## 0.6.2 (2026-10-03)
 
 ### New

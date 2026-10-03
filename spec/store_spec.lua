@@ -148,6 +148,31 @@ describe("Anchor", function()
         assert.equals(170, y)
     end)
 
+    it("keeps a margin note in its margin, as far from the text", function()
+        local column = { x0 = 80, x1 = 900 }
+        -- A note in the right margin beside the word, 50 px clear of the text.
+        local a = Anchor.fromWord({ x0 = 930, y0 = 190, x1 = 970, y1 = 230 }, "/x", word, column)
+        assert.equals("right", a.margin)
+        assert.equals(50, a.gap)
+        -- Bigger margins and font: the note stays 50 px right of the text,
+        -- level with the word.
+        local x, y = Anchor.place(a, { x = 300, y = 500, w = 90, h = 60 }, { x0 = 120, x1 = 860 })
+        assert.equals(910, x)
+        assert.equals(500 + a.dy * 60, y)
+    end)
+
+    it("knows the left margin too, and text strokes aren't in either", function()
+        local column = { x0 = 80, x1 = 900 }
+        local left = Anchor.fromWord({ x0 = 20, y0 = 190, x1 = 60, y1 = 230 }, "/x", word, column)
+        assert.equals("left", left.margin)
+        assert.equals(40, left.gap)
+        local x = Anchor.place(left, word, { x0 = 100, x1 = 880 })
+        assert.equals(60, x)
+        local inside = Anchor.fromWord({ x0 = 140, y0 = 260, x1 = 180, y1 = 300 }, "/x", word, column)
+        assert.is_nil(inside.margin)
+        assert.equals(160, (Anchor.place(inside, word, column)))
+    end)
+
     it("needs a word with a height", function()
         assert.is_nil(Anchor.fromWord({ x0 = 0, y0 = 0, x1 = 1, y1 = 1 }, "/x", { x = 0, y = 0, w = 1, h = 0 }))
         assert.is_nil(Anchor.fromWord({ x0 = 0, y0 = 0, x1 = 1, y1 = 1 }, nil, word))

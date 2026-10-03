@@ -86,7 +86,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.2"
+local PLUGIN_VERSION = "0.6.3"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -2612,6 +2612,7 @@ end
 
 -- Index a stroke by page for quick lookup
 function Pencil:indexStroke(stroke_idx, page)
+    self._shown = nil
     if not self.page_strokes[page] then
         self.page_strokes[page] = {}
     end
@@ -2623,7 +2624,11 @@ end
 -- Rolling documents only: a paged document's page numbers never change.
 -- A stroke drawn before its page was captured is anchored when it is.
 function Pencil:anchorStroke(stroke)
-    if not stroke or stroke.anchor or not self.ui.rolling then return end
+    if not stroke or not self.ui.rolling then return end
+    -- The layout it's written in, so it's drawn as written there and moved
+    -- with its word in another (shownStrokes).
+    if stroke.layout == nil then stroke.layout = self:layoutKey() end
+    if stroke.anchor then return end
     local capture = self.page_capture
     if not capture or capture.page ~= stroke.page or not capture.words then return end
     local bbox = PencilGeometry.computeStrokeBbox(stroke)
@@ -2631,7 +2636,7 @@ function Pencil:anchorStroke(stroke)
     local word, box = PencilWords.nearest(capture.words,
         (bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2)
     if word then
-        stroke.anchor = PencilAnchor.fromWord(bbox, word.pos0, box)
+        stroke.anchor = PencilAnchor.fromWord(bbox, word.pos0, box, self:textColumn())
     end
 end
 
@@ -2725,7 +2730,10 @@ function Pencil:backfillGroupXPointers()
                 local old_markup = nil
                 for _, idx in ipairs(group.stroke_indices or {}) do
                     local stroke = self.strokes[idx]
-                    if stroke and not stroke.anchor then
+                    -- Only ink in the layout it was written in is where
+                    -- it was written.
+                    if stroke and not stroke.anchor
+                            and (stroke.layout == nil or stroke.layout == self:layoutKey()) then
                         self:anchorStroke(stroke)
                         if stroke.anchor then anchored = true end
                     end
@@ -2757,6 +2765,7 @@ end
 -- @param stroke_idx number  index of the stroke in self.strokes
 -- @param skip_bookmark boolean  if true, skip bookmark sync (used during bootstrap)
 function Pencil:assignStrokeToGroup(stroke_idx, skip_bookmark)
+    self._shown = nil
     local stroke = self.strokes[stroke_idx]
     if not stroke then return end
 
@@ -2858,6 +2867,7 @@ end
 -- Rebuild all annotation groups from scratch by re-running the grouping algorithm
 -- on all existing strokes sorted by datetime. Called after erase/undo operations.
 function Pencil:rebuildAnnotationGroups()
+    self._shown = nil
     local ok, err = pcall(function()
         -- Remove all existing bookmarks for pencil groups, and cancel any
         -- pending image captures (group ids will change).
@@ -3673,6 +3683,12 @@ end
 -- strokes, expanded by the eraser width and clamped to the screen. Returns
 -- nil when no stroke has geometry, signalling the caller to refresh fully.
 function Pencil:erasedStrokesRefreshRect(strokes)
+    -- Where the erased ink was shown, which may differ from where it was
+    -- written (shownStrokes).
+    if self._erased_shown then
+        strokes = self._erased_shown
+        self._erased_shown = nil
+    end
     local bbox = nil
     for _, s in ipairs(strokes) do
         local b = PencilGeometry.computeStrokeBbox(s)
@@ -3712,10 +3728,11 @@ function Pencil:eraseAtPoint(x, y, page)
 
     -- Iterate only strokes on the current page via the page index. Keeps the
     -- per-sample erase cost O(strokes-on-page) instead of O(total-strokes).
-    local page_indices = self.page_strokes and self.page_strokes[page] or nil
-    if page_indices then
-        for _, i in ipairs(page_indices) do
-            local stroke = self.strokes[i]
+    -- Ink is erased where it's shown, moved or not (shownStrokes).
+    local shown_list = self:shownStrokes(page)
+    if #shown_list > 0 then
+        for _, shown in ipairs(shown_list) do
+            local i, stroke = shown[1], shown[2]
             if stroke then
                 if self.input_debug_mode and stroke.points and #stroke.points > 0 then
                     local min_x, max_x, min_y, max_y = stroke.points[1].x, stroke.points[1].x, stroke.points[1].y, stroke.points[1].y
@@ -3729,7 +3746,11 @@ function Pencil:eraseAtPoint(x, y, page)
                         i, min_x, max_x, min_y, max_y, x, y, eraser_width))
                 end
                 if self:isPointNearStroke(x, y, stroke, eraser_width) then
-                    table.insert(deleted, stroke)
+                    -- The stroke itself, as written (undo puts it back); the refresh
+                    -- covers it where it was shown.
+                    table.insert(deleted, self.strokes[i])
+                    self._erased_shown = self._erased_shown or {}
+                    table.insert(self._erased_shown, stroke)
                     table.insert(indices_to_remove, i)
                     if self.input_debug_mode then
                         self:writeDebugLog(string.format("ERASE: found stroke %d to delete", i))
@@ -3804,6 +3825,119 @@ end
 -- offscreen buffer, this method is invoked recursively as part of the view
 -- module loop; the _capturing guard suppresses re-entry so we can paint the
 -- group's strokes deliberately onto the captured page background.
+-- ---- Ink across layouts --------------------------------------------------
+
+-- The current layout of a rolling document (KOReader's rendering hash: the
+-- font, its size, spacing, margins, styles and screen), or nil.
+function Pencil:layoutKey()
+    if not self.ui.rolling or not self.ui.document then return nil end
+    local ok, key = pcall(self.ui.document.getDocumentRenderingHash, self.ui.document, true)
+    return ok and key or nil
+end
+
+-- The text's left and right edges on screen ({x0, x1}), from the page
+-- margins.
+function Pencil:textColumn()
+    local ok, m = pcall(self.ui.document.getPageMargins, self.ui.document)
+    if not ok or not m then return nil end
+    return { x0 = m.left or 0, x1 = Screen:getWidth() - (m.right or 0) }
+end
+
+-- The box ({x, y, w, h}) on screen of the word an anchor names, or nil.
+function Pencil:anchorWordBox(xpointer)
+    local doc = self.ui.document
+    local ok, boxes = pcall(function()
+        return doc:getScreenBoxesFromPositions(xpointer, doc:getNextVisibleWordEnd(xpointer), true)
+    end)
+    return ok and boxes and boxes[1] or nil
+end
+
+-- A stroke drawn (dx, dy) away from where it was written.
+local function movedStroke(stroke, dx, dy)
+    local points = {}
+    for i, p in ipairs(stroke.points) do
+        points[i] = { x = p.x + dx, y = p.y + dy }
+    end
+    return setmetatable({ points = points }, { __index = stroke })
+end
+
+-- The strokes shown on `page`, as { idx, stroke } pairs: ink written in the
+-- current layout as written; ink written in another, on the page its
+-- anchor word is on now and moved with it (lib/anchor), each group of
+-- strokes as one so handwriting keeps its shape, and kept on screen. Ink
+-- with no anchor stays where it was written. Cached until the layout, the
+-- page or the strokes change.
+function Pencil:shownStrokes(page)
+    local key = self:layoutKey()
+    local cache = self._shown
+    if cache and cache.key == key and cache.page == page then return cache.list end
+    local list = {}
+    local elsewhere = {} -- strokes from other layouts, to be moved
+    for idx, stroke in ipairs(self.strokes) do
+        if key == nil or stroke.layout == nil or stroke.layout == key or not stroke.anchor then
+            if stroke.page == page then table.insert(list, { idx, stroke }) end
+        else
+            elsewhere[idx] = true
+        end
+    end
+    if next(elsewhere) then
+        local column = self:textColumn()
+        local W, H = Screen:getWidth(), Screen:getHeight()
+        local function move(indices)
+            -- The group's first anchored stroke places it.
+            local ref
+            for _, idx in ipairs(indices) do
+                if elsewhere[idx] then ref = self.strokes[idx]; break end
+            end
+            if not ref then return end
+            local ok, p = pcall(self.ui.document.getPageFromXPointer, self.ui.document, ref.anchor.xpointer)
+            if not ok or p ~= page then return end
+            local box = self:anchorWordBox(ref.anchor.xpointer)
+            local bbox = PencilGeometry.computeStrokeBbox(ref)
+            if not box or not bbox then return end
+            local nx, ny = PencilAnchor.place(ref.anchor, box, column)
+            local dx = nx - (bbox.x0 + bbox.x1) / 2
+            local dy = ny - (bbox.y0 + bbox.y1) / 2
+            -- Kept on screen, as a whole.
+            local all
+            for _, idx in ipairs(indices) do
+                if elsewhere[idx] then
+                    local b = PencilGeometry.computeStrokeBbox(self.strokes[idx])
+                    if b then
+                        all = all or { x0 = b.x0, y0 = b.y0, x1 = b.x1, y1 = b.y1 }
+                        all.x0, all.y0 = math.min(all.x0, b.x0), math.min(all.y0, b.y0)
+                        all.x1, all.y1 = math.max(all.x1, b.x1), math.max(all.y1, b.y1)
+                    end
+                end
+            end
+            if all then
+                dx = math.max(-all.x0, math.min(dx, W - 1 - all.x1))
+                dy = math.max(-all.y0, math.min(dy, H - 1 - all.y1))
+            end
+            for _, idx in ipairs(indices) do
+                if elsewhere[idx] then
+                    table.insert(list, { idx, movedStroke(self.strokes[idx], math.floor(dx + 0.5), math.floor(dy + 0.5)) })
+                end
+            end
+        end
+        local grouped = {}
+        for _, group in ipairs(self.annotation_groups) do
+            move(group.stroke_indices or {})
+            for _, idx in ipairs(group.stroke_indices or {}) do grouped[idx] = true end
+        end
+        for idx in pairs(elsewhere) do
+            if not grouped[idx] then move({ idx }) end
+        end
+    end
+    self._shown = { key = key, page = page, list = list }
+    return list
+end
+
+-- KOReader finished laying the book out again: ink positions may change.
+function Pencil:onDocumentRerendered()
+    self._shown = nil
+end
+
 function Pencil:paintTo(bb, x, y)
     if self._capturing then return end
 
@@ -3880,14 +4014,10 @@ function Pencil:paintTo(bb, x, y)
         }
     end
 
-    -- Render saved strokes for current page (skipping stale ones).
-    local indices = self.page_strokes[page] or {}
-    for _, idx in ipairs(indices) do
-        if not (stale_indices and stale_indices[idx]) then
-            local stroke = self.strokes[idx]
-            if stroke then
-                self:renderStroke(bb, stroke)
-            end
+    -- Render the strokes shown on this page (skipping stale ones).
+    for _, shown in ipairs(self:shownStrokes(page)) do
+        if not (stale_indices and stale_indices[shown[1]]) then
+            self:renderStroke(bb, shown[2])
         end
     end
 
@@ -3984,6 +4114,7 @@ function Pencil:capturePage()
     local capture = {
         bb = bb,
         page = page,
+        layout_key = self:layoutKey(),
         screen = { width = sw, height = sh, rotation = Screen:getRotationMode() },
     }
     if self.ui.rolling then
@@ -4017,12 +4148,14 @@ function Pencil:attachPageCapture()
     if not capture then return end
     local attached = false
     for _, stroke in ipairs(self:getStrokesForPage(capture.page)) do
-        if stroke.markup and not self.markup_captures[stroke.markup] then
+        -- Ink written in another layout was on another page as shown then.
+        local here = stroke.layout == nil or stroke.layout == capture.layout_key
+        if here and stroke.markup and not self.markup_captures[stroke.markup] then
             self.markup_captures[stroke.markup] = capture
             capture.used = true
             attached = true
         end
-        if stroke.markup and self.markup_captures[stroke.markup] == capture and not stroke.anchor then
+        if here and stroke.markup and self.markup_captures[stroke.markup] == capture and not stroke.anchor then
             self:anchorStroke(stroke)
         end
     end
@@ -4313,6 +4446,7 @@ function Pencil:strokeToSaveable(stroke)
         color_name = stroke.color_name,  -- Save color name for persistence
         anchor = stroke.anchor,
         markup = stroke.markup,
+        layout = stroke.layout,
     }
     -- Fields this version doesn't know (from a newer one) are kept.
     for k, v in pairs(stroke.extra or {}) do
@@ -4325,6 +4459,7 @@ end
 local KNOWN_STROKE_FIELDS = {
     page = true, tool = true, width = true, alpha = true, datetime = true,
     points = true, p = true, color_name = true, anchor = true, markup = true,
+    layout = true,
 }
 
 -- Convert saved stroke back to usable format
@@ -4371,6 +4506,7 @@ function Pencil:strokeFromSaved(saved)
         points = points,
         anchor = saved.anchor,
         markup = saved.markup,
+        layout = saved.layout,
         extra = extra,
     }
 end
@@ -4502,6 +4638,15 @@ function Pencil:onReaderReady()
     end
     logger.info("Pencil: after loadStrokes, strokes count =", #self.strokes,
         "groups =", #self.annotation_groups)
+
+    -- Ink from before layouts were recorded is taken to be in the layout the
+    -- book opens in (true unless the font was changed after writing).
+    local key = self:layoutKey()
+    if key then
+        for _, stroke in ipairs(self.strokes) do
+            if stroke.layout == nil then stroke.layout = key end
+        end
+    end
 
     -- Sync annotation group bookmarks now that UI modules are ready
     self:syncAllBookmarks()

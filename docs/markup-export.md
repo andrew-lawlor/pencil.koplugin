@@ -51,7 +51,7 @@ Fields can be missing when the plugin couldn't capture the page (for example, in
 - Strokes are in the order they were written.
 - `points` are the stroke's centre line, in screen pixels of the page as captured (`markup.json`'s `screen`), so they line up with `page.png` and with `words.json`'s boxes. Draw them as lines `width` pixels wide.
 - `color` is the pen colour's name, `tool` is `pen` or `highlighter`, and `datetime` is in Unix seconds.
-- `anchor` ties the stroke to the text: the XPointer of the nearest word, and the offset of the stroke's centre from that word's box, measured in line heights (`dx` from its left edge, `dy` from its top). Use it to place the stroke on a different layout. It's missing if the stroke couldn't be anchored.
+- `anchor` ties the stroke to the text: the XPointer of the nearest word, and the offset of the stroke's centre from that word's box, measured in line heights (`dx` from its left edge, `dy` from its top). Use it to place the stroke on a different layout. It's missing if the stroke couldn't be anchored. A stroke wholly in a page margin also has `margin` (`left` or `right`) and `gap`, the distance in pixels from the text's edge to the stroke's centre: on another layout, it belongs in that margin, as far from the text, level with its word. Both are optional and new in 0.6.3; format 1 readers can ignore them.
 
 ## page.png
 
