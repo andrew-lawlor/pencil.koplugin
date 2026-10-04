@@ -4,8 +4,6 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches-ignore:
-      - main
 
 jobs:
   test:
@@ -69,3 +67,21 @@ jobs:
         with:
           name: coverage-report
           path: luacov.report.out
+
+  desktop:
+    # The plugin in KOReader's own desktop build, headless: the markup
+    # export, the pen menu, ink after a font change, renaming a book.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache KOReader
+        uses: actions/cache@v4
+        with:
+          path: tests/desktop/.koreader
+          key: koreader-linux-x86_64-${{ hashFiles('tests/desktop/run.sh') }}
+
+      - name: Run the desktop tests
+        run: tests/desktop/run.sh

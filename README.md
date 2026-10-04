@@ -121,7 +121,7 @@ The full format is in [docs/markup-export.md](docs/markup-export.md).
 
 ## Development
 
-Tests run with [busted](https://lunarmodules.github.io/busted/) on Lua 5.1: `busted spec/`. New logic lives in small modules under `pencil.koplugin/lib/` so it can be tested without KOReader. To measure on a device, set `PROFILE = true` at the end of `main.lua`: timings go to KOReader's `crash.log`.
+Unit tests run with [busted](https://lunarmodules.github.io/busted/) on Lua 5.1: `busted spec/`. The plugin itself is tested in KOReader's desktop build, headless, by `tests/desktop/run.sh` (Linux; it downloads KOReader on first run): the markup export, the pen menu and Highlight tool, ink after a font change, and renaming and copying a book. Both run on every push. New logic lives in small modules under `pencil.koplugin/lib/` so it can be tested without KOReader. To measure on a device, set `PROFILE = true` at the end of `main.lua`: timings go to KOReader's `crash.log`.
 
 ## Acknowledgements
 
