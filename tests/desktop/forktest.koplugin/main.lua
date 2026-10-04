@@ -7,6 +7,7 @@
 --   FORKTEST_MARKS      an underline and a circle after a font change
 --                       (FORKTEST_GROW: how many sizes bigger; 14 by default)
 --   FORKTEST_RENAME     renaming and copying a book (open a.epub)
+--   FORKTEST_ROTATE     a note and an underline after turning the screen
 -- The positions drawn at suit tests/desktop/odyssey.epub at 1053×1400.
 local Event = require("ui/event")
 local JSON = require("json")
@@ -334,6 +335,95 @@ function Test:onReaderReady()
                                 local f = io.open(out, "w"); f:write(JSON.encode(r)); f:close()
                                 UIManager:quit()
                             end)
+                        end)
+                    end)
+                end)
+            end)
+        end)
+        return
+    end
+    if os.getenv("FORKTEST_ROTATE") then
+        -- Turning the screen is a layout change like any other: a note and
+        -- an underline follow their words, no camera badge is shown, and
+        -- turning back draws them exactly as written.
+        local out = os.getenv("FORKTEST_ROTATE")
+        local p, doc, r = self.ui.pencil, self.ui.document, { checks = {} }
+        local Screen = require("device").screen
+        local function check(name, ok, detail) table.insert(r.checks, { name = name, ok = ok and true or false, detail = detail }) end
+        local function boxOf(points)
+            local b = { math.huge, math.huge, -math.huge, -math.huge }
+            for _, q in ipairs(points) do
+                b[1], b[2] = math.min(b[1], q.x), math.min(b[2], q.y)
+                b[3], b[4] = math.max(b[3], q.x), math.max(b[4], q.y)
+            end
+            return b
+        end
+        G_reader_settings:saveSetting("pencil_annotation_enabled", true)
+        UIManager:scheduleIn(1, function()
+            for i = #UIManager._window_stack, 1, -1 do
+                local w = UIManager._window_stack[i].widget
+                if w ~= self.ui then UIManager:close(w) end
+            end
+            self.ui:handleEvent(Event:new("GotoPage", 40))
+            UIManager:scheduleIn(2, function()
+                p:capturePage()
+                local function wordBox(text)
+                    for _, w in ipairs(p.page_capture.words) do
+                        if w.text:find("^" .. text) then return w.boxes[1] end
+                    end
+                end
+                local first = #p.strokes + 1
+                local l0, l1 = wordBox("Laertes"), wordBox("fatal")
+                draw(p, { { l0[1] - 2, l0[4] + 4 }, { (l0[1] + l1[3]) / 2, l0[4] + 6 }, { l1[3] + 2, l0[4] + 4 } })
+                draw(p, { { 960, 300 }, { 1000, 310 } })
+                draw(p, { { 965, 330 }, { 1005, 340 } })
+                p:saveStrokes()
+                for _, g in ipairs(p.annotation_groups) do p:captureGroupImage(g) end
+                local key0 = p:layoutKey()
+                local note = p.strokes[first + 1]
+                self.ui:handleEvent(Event:new("SetRotationMode", 1))
+                UIManager:scheduleIn(3, function()
+                    check("turning the screen changes the layout", p:layoutKey() ~= key0, { p:layoutKey(), key0 })
+                    local u = p.strokes[first]
+                    local page = doc:getPageFromXPointer(u.mark.pos0)
+                    self.ui:handleEvent(Event:new("GotoPage", page))
+                    UIManager:scheduleIn(1, function()
+                        local shown = {}
+                        for _, sh in ipairs(p:shownStrokes(page)) do
+                            if sh[1] >= first then shown[sh[1]] = boxOf(sh[2].points) end
+                        end
+                        local words = doc:getScreenBoxesFromPositions(u.mark.pos0, u.mark.pos1, true)
+                        local w0 = words[1]
+                        local ub = shown[first]
+                        check("the underline is under its words, turned", ub and w0 and ub[2] >= w0.y + w0.h - 5
+                            and ub[2] <= w0.y + w0.h * 1.6, { underline = ub, word = w0 })
+                        check("no camera badge", p:getStaleGroupsForCurrentView() == nil)
+                        -- The note's word may be on another page now.
+                        local npage = doc:getPageFromXPointer(note.anchor.xpointer)
+                        self.ui:handleEvent(Event:new("GotoPage", npage))
+                        UIManager:scheduleIn(1, function()
+                        local nshown = {}
+                        for _, sh in ipairs(p:shownStrokes(npage)) do
+                            if sh[1] == first + 1 then nshown = boxOf(sh[2].points) end
+                        end
+                        local nb = p:anchorWordBox(note.anchor.xpointer)
+                        check("the note is beside its word, turned", nb and nshown[1] and nshown[1] > nb.x
+                            and math.abs((nshown[2] + nshown[4]) / 2 - (nb.y + nb.h / 2)) < nb.h * 1.5
+                            and nshown[3] <= Screen:getWidth(), { note = nshown, word = nb })
+                        check("no camera badge on its page either", p:getStaleGroupsForCurrentView() == nil)
+                        self.ui:handleEvent(Event:new("SetRotationMode", 0))
+                        UIManager:scheduleIn(3, function()
+                            self.ui:handleEvent(Event:new("GotoPage", 40))
+                            UIManager:scheduleIn(1, function()
+                                local exact = 0
+                                for _, sh in ipairs(p:shownStrokes(40)) do
+                                    if sh[1] >= first and getmetatable(sh[2]) == nil then exact = exact + 1 end
+                                end
+                                check("turned back, drawn exactly as written", exact == 3, exact)
+                                local f = io.open(out, "w"); f:write(JSON.encode(r)); f:close()
+                                UIManager:quit()
+                            end)
+                        end)
                         end)
                     end)
                 end)

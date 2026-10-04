@@ -2,6 +2,10 @@
 
 ## 0.6.4 (unreleased)
 
+### Changed
+
+- **Turning the screen is like changing the font.** Your notes are drawn beside their words and your underlines and circles under and around theirs, in landscape as in portrait, instead of a camera badge you had to tap to see a picture of them. Turn back and the ink is exactly as you wrote it. The badge is still shown for ink that can't follow its words: on a PDF, or older ink not yet anchored.
+
 ### Fixed
 
 - **Renaming or copying a book no longer loses its ink.** KOReader moves a book's settings to a new folder when you rename it, but leaves the plugin's files behind. The plugin now remembers where a book's ink is and brings it along the next time the book opens: on a rename or move, the strokes, their pictures and the markup export move to the new folder; on a copy, they're copied and the original keeps its own. From the original repository's pull request #86 by bateast, extended to the fork's export and to copies. It works for ink saved with this version or later: ink from older versions has no location recorded until its book is opened once.

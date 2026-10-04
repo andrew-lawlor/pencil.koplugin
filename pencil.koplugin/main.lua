@@ -3084,6 +3084,14 @@ function Pencil:captureGroupImage(group)
     -- Only capture if the group's page matches the current pagination;
     -- otherwise ReaderView would render the wrong content. For rolling docs
     -- this uses the group's XPointer (rotation-stable) when available.
+    -- Only in the layout the ink was written in: elsewhere its own
+    -- positions don't match the page (shownStrokes moves it).
+    local key = self:layoutKey()
+    for _, idx in ipairs(group.stroke_indices or {}) do
+        local stroke = self.strokes[idx]
+        if key and stroke and stroke.layout and stroke.layout ~= key then return false end
+    end
+
     local gpage = self:getGroupCurrentPage(group)
     if gpage ~= self:getCurrentPage() then
         logger.dbg("Pencil: captureGroupImage: page mismatch (group=", tostring(gpage),
@@ -3396,6 +3404,21 @@ function Pencil:renderRotationBadge(bb, group)
         rect.w - 2 * inset, rect.h - 2 * inset, Blitbuffer.COLOR_WHITE)
 end
 
+-- Whether a group's ink is drawn by its words on any layout, rotation
+-- included (shownStrokes): a reflowable book, every stroke anchored. Only
+-- other ink (a PDF's, or older ink not anchored yet) still needs the
+-- rotation badge.
+function Pencil:followsText(group)
+    if not self.ui.rolling then return false end
+    local indices = group.stroke_indices or {}
+    if #indices == 0 then return false end
+    for _, idx in ipairs(indices) do
+        local stroke = self.strokes[idx]
+        if not (stroke and stroke.anchor) then return false end
+    end
+    return true
+end
+
 -- Compute the list of stale-rotation groups whose badges should be drawn on
 -- the current page in the current rotation. Returns nil if no badges should
 -- show (no stale groups, or suppressed because a native annotation is also
@@ -3410,7 +3433,8 @@ function Pencil:getStaleGroupsForCurrentView()
         local gpage = self:getGroupCurrentPage(group)
         if gpage == page then
             if group.image_rotation == nil
-                    or group.image_rotation == current_rot then
+                    or group.image_rotation == current_rot
+                    or self:followsText(group) then
                 has_native = true
             elseif group.image_path then
                 stale = stale or {}
@@ -4019,9 +4043,11 @@ function Pencil:paintTo(bb, x, y)
                 groups_with_image = groups_with_image + 1
             end
             if group.image_rotation == nil
-                    or group.image_rotation == current_rot then
-                -- Renders natively (same rotation as capture, or legacy group
-                -- without rotation info — render strokes as-is).
+                    or group.image_rotation == current_rot
+                    or self:followsText(group) then
+                -- Renders natively (same rotation as capture, legacy group
+                -- without rotation info, or ink that follows its words to
+                -- any layout: shownStrokes draws it).
                 has_native_annotation = true
             elseif group.image_path then
                 stale_groups = stale_groups or {}

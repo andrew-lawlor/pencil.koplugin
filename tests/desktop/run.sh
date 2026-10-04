@@ -1,7 +1,8 @@
 #!/bin/sh
 # Runs the plugin in KOReader's desktop build, headless, and checks what it
 # does: the markup export, the pen menu and Highlight tool, ink after a font
-# change, and renaming and copying a book (forktest.koplugin).
+# change or a turn of the screen, and renaming and copying a book
+# (forktest.koplugin).
 #
 #   tests/desktop/run.sh [koreader dir]
 #
@@ -66,5 +67,6 @@ test_one font FORKTEST_FONT
 test_one marks FORKTEST_MARKS odyssey.epub
 test_one marks-wrapped FORKTEST_MARKS odyssey.epub FORKTEST_GROW=40
 test_one rename FORKTEST_RENAME a.epub
+test_one rotate FORKTEST_ROTATE
 
 exit $failed
