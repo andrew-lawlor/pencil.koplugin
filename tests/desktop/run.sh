@@ -68,5 +68,6 @@ test_one marks FORKTEST_MARKS odyssey.epub
 test_one marks-wrapped FORKTEST_MARKS odyssey.epub FORKTEST_GROW=40
 test_one rename FORKTEST_RENAME a.epub
 test_one rotate FORKTEST_ROTATE
+test_one bookmarks FORKTEST_BOOKMARKS
 
 exit $failed

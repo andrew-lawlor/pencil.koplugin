@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.5 (unreleased)
+
+### Changed
+
+- **Bookmarks for your ink are no longer experimental.** Each piece of ink is listed in KOReader's Bookmarks menu (**Pencil menu > Bookmarks for your ink**, off by default). Your setting from the experimental version carries over.
+
+### Fixed
+
+- **A bookmark for ink could stop a book from opening** (the original's issue #84: "invalid order function for sorting"). It was placed at the position of the page number the ink was written on, which a font change, rotation or rename could make invalid, and KOReader can't sort a bookmark at an invalid position. Bookmarks are now placed at the word the ink is anchored to, and only when that position is valid.
+- Pencil's bookmarks had the group's id in place of a date, which showed in the Bookmarks menu, upset sorting by date, and could confuse KOReader's annotation import, which compares dates. They now have the date the ink was written, and are marked as Pencil's in a field of their own. Bookmarks from older versions are found and replaced.
+- Their text no longer includes a page number, which went stale after a font change: KOReader shows the current page beside each bookmark.
+
 ## 0.6.4 (2026-10-03)
 
 ### Changed

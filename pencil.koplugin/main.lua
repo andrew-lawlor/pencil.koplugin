@@ -10,6 +10,7 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 local DataStorage = require("datastorage")
 local Device = require("device")
 local Dispatcher = require("dispatcher")
+local Event = require("ui/event")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -87,7 +88,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.4"
+local PLUGIN_VERSION = "0.6.5"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -215,7 +216,7 @@ function Pencil:init()
         { name = "Gray", color = Blitbuffer.Color8(gray_value) },
     }
 
-    -- Available pen widths for the optional experimental width picker.
+    -- Pen widths offered in the pen menu.
     -- Chosen in the pen menu; see loadSettings().
     self.available_widths = {
         { name = "w3", width = 3 },
@@ -618,7 +619,7 @@ function Pencil:handleStylusSlot(input, slot)
             self.pen_y = y
             -- Only track picker state and schedule the 10Hz poll when the
             -- hold-pen-still gesture would actually produce something to
-            -- show. Skipping these when both experimental pickers are off
+            -- show. Skipping these when holding to open the pen menu is off
             -- avoids an UIManager:scheduleIn closure allocation on every
             -- pen-down — real GC pressure on the A53 during multi-second
             -- strokes.
@@ -1170,8 +1171,12 @@ function Pencil:loadSettings()
     self.current_tool = TOOL_PEN
     -- Input debug mode: log all input details
     self.input_debug_mode = settings.input_debug_mode or false
-    -- Experimental features
-    self.experimental_bookmark_sync = settings.experimental_bookmark_sync or false
+    -- Bookmark sync was experimental before 0.6.5, under another name.
+    if settings.bookmark_sync ~= nil then
+        self.bookmark_sync = settings.bookmark_sync
+    else
+        self.bookmark_sync = settings.experimental_bookmark_sync or false
+    end
     -- Swap eraser and highlighter
     self.swap_eraser_and_highlighter = settings.swap_eraser_and_highlighter or false
     self.hold_opens_pen_menu = settings.hold_opens_pen_menu or false
@@ -1186,7 +1191,7 @@ function Pencil:loadSettings()
             end
         end
     end
-    -- Load pen width if previously chosen via the experimental width picker.
+    -- Load the pen width chosen in the pen menu.
     -- Validated against available_widths so a malformed settings file can't
     -- inject arbitrary widths.
     local saved_width = settings.pen_width
@@ -1204,7 +1209,7 @@ end
 function Pencil:saveSettings()
     G_reader_settings:saveSetting("pencil_annotation_settings", {
         input_debug_mode = self.input_debug_mode,
-        experimental_bookmark_sync = self.experimental_bookmark_sync,
+        bookmark_sync = self.bookmark_sync,
         hold_opens_pen_menu = self.hold_opens_pen_menu,
         pen_color_name = self.tool_settings[TOOL_PEN].color_name,
         swap_eraser_and_highlighter = self.swap_eraser_and_highlighter,
@@ -1386,33 +1391,20 @@ function Pencil:addToMainMenu(menu_items)
                 separator = true,
             },
             {
-                text = _("Experimental"),
-                sub_item_table = {
-                    {
-                        text = _("Bookmark sync"),
-                        help_text = _("Automatically create KOReader bookmarks for pencil annotations so you can navigate to annotated pages from the Bookmarks menu."),
-                        checked_func = function()
-                            return self.experimental_bookmark_sync
-                        end,
-                        callback = function()
-                            self.experimental_bookmark_sync = not self.experimental_bookmark_sync
-                            self:saveSettings()
-                            if self.experimental_bookmark_sync then
-                                self:syncAllBookmarks()
-                                UIManager:show(InfoMessage:new{
-                                    text = _("Bookmark sync enabled. Pencil annotations will appear in the Bookmarks menu."),
-                                    timeout = 3,
-                                })
-                            else
-                                self:removeAllPencilBookmarks()
-                                UIManager:show(InfoMessage:new{
-                                    text = _("Bookmark sync disabled. Pencil bookmarks removed."),
-                                    timeout = 3,
-                                })
-                            end
-                        end,
-                    },
-                },
+                text = _("Bookmarks for your ink"),
+                help_text = _("List each piece of ink in KOReader's Bookmarks menu, so you can go back to the pages you wrote on. Tap one to see a picture of it."),
+                checked_func = function()
+                    return self.bookmark_sync
+                end,
+                callback = function()
+                    self.bookmark_sync = not self.bookmark_sync
+                    self:saveSettings()
+                    if self.bookmark_sync then
+                        self:syncAllBookmarks()
+                    else
+                        self:removeAllPencilBookmarks()
+                    end
+                end,
                 separator = true,
             },
             {
@@ -1967,10 +1959,10 @@ function Pencil:flushDeferredWork()
 end
 
 -- Sync bookmarks for any groups marked dirty since the last flush. No-op when
--- the experimental bookmark sync feature is off or nothing is pending.
+-- bookmarks for your ink are off or nothing is pending.
 function Pencil:flushDirtyGroups()
     if not self.dirty_groups then return end
-    if not self.experimental_bookmark_sync then
+    if not self.bookmark_sync then
         self.dirty_groups = nil
         return
     end
@@ -2863,7 +2855,7 @@ end
 -- Mark a group as needing a bookmark sync on the next deferred-work flush.
 -- Keeps the heavy getPageXPointer / annotation insertion off the writing path.
 function Pencil:markGroupDirty(group)
-    if not self.experimental_bookmark_sync then return end
+    if not self.bookmark_sync then return end
     self.dirty_groups = self.dirty_groups or {}
     self.dirty_groups[group.id] = group
 end
@@ -2946,93 +2938,116 @@ function Pencil:getBookmarkPageRef(group_page)
     return group_page
 end
 
--- Sync a group's bookmark into KOReader's annotation system.
+-- The group a KOReader bookmark belongs to, if it's one of Pencil's. Older
+-- versions kept the group id in the bookmark's date; still recognised so
+-- those bookmarks can be found and replaced.
+local function pencilGroupOf(item)
+    if not item then return nil end
+    if item.pencil_group then return item.pencil_group end
+    if type(item.datetime) == "string" and item.datetime:match("^pencil_") then
+        return item.datetime
+    end
+    return nil
+end
+
+-- Where a group's bookmark goes: in a reflowable book, the position of the
+-- word its ink is anchored to, which stays valid on any layout (a page
+-- number's position doesn't, and KOReader can't sort a bookmark whose
+-- position is invalid: issue #84); in a PDF, its page. nil when there's no
+-- position that resolves.
+function Pencil:bookmarkPosition(group)
+    local doc = self.ui.document
+    if not self.ui.rolling then return group.page end
+    local xp = PencilStore.groupXPointer(group, self.strokes) or group.xpointer
+    if not xp and group.page then
+        -- No anchor yet: the page's position, only while the ink is in the
+        -- layout it was written in.
+        local key = self:layoutKey()
+        for _, idx in ipairs(group.stroke_indices or {}) do
+            local stroke = self.strokes[idx]
+            if stroke and stroke.layout and stroke.layout ~= key then return nil end
+        end
+        local ok, page_xp = pcall(doc.getPageXPointer, doc, group.page)
+        xp = ok and page_xp or nil
+    end
+    if type(xp) ~= "string" then return nil end
+    local ok, valid = pcall(doc.isXPointerInDocument, doc, xp)
+    if not ok or not valid then return nil end
+    return xp
+end
+
+-- When a group was begun, as KOReader dates its annotations.
+function Pencil:groupDatetime(group)
+    local first
+    for _, idx in ipairs(group.stroke_indices or {}) do
+        local t = self.strokes[idx] and self.strokes[idx].datetime
+        if t and (not first or t < first) then first = t end
+    end
+    return os.date("%Y-%m-%d %H:%M:%S", first or os.time())
+end
+
+-- Adds (or replaces) a group's bookmark in KOReader's annotations, the way
+-- KOReader adds a page bookmark.
 function Pencil:syncGroupBookmark(group)
-    if not self.experimental_bookmark_sync then return end
-    if not self.ui or not self.ui.annotation then
-        logger.dbg("Pencil: annotation module not available, skipping bookmark sync")
-        return
-    end
-    if not self.ui.annotation.annotations then
-        logger.dbg("Pencil: annotations not loaded yet, skipping bookmark sync")
-        return
-    end
-
+    if not self.bookmark_sync then return end
+    if not (self.ui and self.ui.annotation and self.ui.annotation.annotations) then return end
     local ok, err = pcall(function()
-        -- Remove existing bookmark for this group first
         self:removeGroupBookmark(group)
-
-        local pageno = self:getPageNumber(group.page)
-        local bookmark_page = self:getBookmarkPageRef(group.page)
-        local chapter = ""
-        if self.ui.toc and self.ui.toc.getTocTitleByPage then
-            chapter = self.ui.toc:getTocTitleByPage(bookmark_page) or ""
+        local position = self:bookmarkPosition(group)
+        if not position then
+            logger.dbg("Pencil: no valid position for the bookmark of group", group.id)
+            return
         end
-
-        local datetime = group.id  -- use group id as unique datetime key
-        group.bookmark_datetime = datetime
-
+        local chapter = self.ui.toc and self.ui.toc.getTocTitleByPage
+            and self.ui.toc:getTocTitleByPage(position) or nil
+        if chapter == "" then chapter = nil end
         local item = {
-            page = bookmark_page,
-            datetime = datetime,
-            text = string.format("Pencil annotation on page %d", pageno),
+            page = position,
+            datetime = self:groupDatetime(group),
+            -- No page number: KOReader shows the current one beside it.
+            text = _("Pencil annotation"),
             chapter = chapter,
+            pencil_group = group.id,
         }
-
-        if self.ui.annotation.addItem then
-            self.ui.annotation:addItem(item)
-            logger.dbg("Pencil: synced bookmark for group", group.id, "on page", pageno)
-        else
-            logger.warn("Pencil: annotation.addItem not available")
-        end
+        local index = self.ui.annotation:addItem(item)
+        self.ui:handleEvent(Event:new("AnnotationsModified", { item, index_modified = index }))
     end)
     if not ok then
         logger.warn("Pencil: bookmark sync failed:", err)
     end
 end
 
--- Remove a group's bookmark from KOReader's annotation system.
+-- Removes a group's bookmark, if it has one.
 function Pencil:removeGroupBookmark(group)
-    if not self.experimental_bookmark_sync then return end
-    if not self.ui or not self.ui.annotation then return end
-    if not group.bookmark_datetime then return end
-
-    local ok, err = pcall(function()
-        local annotations = self.ui.annotation.annotations
-        if not annotations then return end
-
-        for i, ann in ipairs(annotations) do
-            if ann.datetime == group.bookmark_datetime then
-                table.remove(annotations, i)
-                logger.dbg("Pencil: removed bookmark for group", group.id)
-                return
-            end
-        end
-    end)
-    if not ok then
-        logger.warn("Pencil: bookmark removal failed:", err)
-    end
-end
-
--- Remove ALL pencil bookmarks from KOReader's annotation system.
--- Used before re-syncing to avoid duplicates.
--- Note: always runs regardless of feature flag, so disabling cleans up.
-function Pencil:removeAllPencilBookmarks()
-    if not self.ui or not self.ui.annotation then return end
-    local annotations = self.ui.annotation.annotations
+    local annotations = self.ui and self.ui.annotation and self.ui.annotation.annotations
     if not annotations then return end
-
-    -- Remove in reverse order to maintain indices
     for i = #annotations, 1, -1 do
-        if annotations[i].datetime and annotations[i].datetime:match("^pencil_") then
+        if pencilGroupOf(annotations[i]) == group.id then
             table.remove(annotations, i)
         end
     end
 end
 
+-- Removes all of Pencil's bookmarks (also those of older versions). Runs
+-- whatever the setting, so turning it off cleans up.
+function Pencil:removeAllPencilBookmarks()
+    local annotations = self.ui and self.ui.annotation and self.ui.annotation.annotations
+    if not annotations then return end
+    local removed = false
+    for i = #annotations, 1, -1 do
+        if pencilGroupOf(annotations[i]) then
+            table.remove(annotations, i)
+            removed = true
+        end
+    end
+    if removed and self.view and self.view.footer then
+        pcall(self.view.footer.maybeUpdateFooter, self.view.footer)
+    end
+end
+
 -- Sync all annotation groups to bookmarks (used after load/rebuild).
 function Pencil:syncAllBookmarks()
-    if not self.experimental_bookmark_sync then return end
+    if not self.bookmark_sync then return end
 
     -- Clean slate: remove all pencil bookmarks first to avoid duplicates
     self:removeAllPencilBookmarks()
@@ -3468,11 +3483,10 @@ end
 -- Called by the bookmark-list hook on menu select. Returns true if we
 -- handled the tap (and the original navigation should be skipped).
 function Pencil:tryShowImageForBookmark(item)
-    if not item or not item.datetime then return false end
-    if not item.datetime:match("^pencil_") then return false end
-    -- Find the matching group by id (group.id is stored as the bookmark datetime).
+    local group_id = pencilGroupOf(item)
+    if not group_id then return false end
     for _, group in ipairs(self.annotation_groups or {}) do
-        if group.id == item.datetime then
+        if group.id == group_id then
             if group.image_path then
                 self:showGroupImagePreview(group)
                 return true
@@ -3558,10 +3572,10 @@ function Pencil:installBookmarkHook()
             and item_or_index
             or (self.ui.annotation and self.ui.annotation.annotations
                     and self.ui.annotation.annotations[item_or_index])
-        if item and item.datetime and item.datetime:match("^pencil_")
-                and _active_pencil and _active_pencil.annotation_groups then
+        local group_id = pencilGroupOf(item)
+        if group_id and _active_pencil and _active_pencil.annotation_groups then
             for _, group in ipairs(_active_pencil.annotation_groups) do
-                if group.id == item.datetime and group.image_path then
+                if group.id == group_id and group.image_path then
                     local path = _active_pencil:getGroupImagePath(group)
                     if path and lfs.attributes(path) then
                         _active_pencil:showGroupImagePreview(group)

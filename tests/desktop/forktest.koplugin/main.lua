@@ -8,6 +8,8 @@
 --                       (FORKTEST_GROW: how many sizes bigger; 14 by default)
 --   FORKTEST_RENAME     renaming and copying a book (open a.epub)
 --   FORKTEST_ROTATE     a note and an underline after turning the screen
+--   FORKTEST_BOOKMARKS  bookmarks for ink: made right, sortable after a font
+--                       change, intact when the book is reopened
 -- The positions drawn at suit tests/desktop/odyssey.epub at 1053×1400.
 local Event = require("ui/event")
 local JSON = require("json")
@@ -428,6 +430,99 @@ function Test:onReaderReady()
                     end)
                 end)
             end)
+        end)
+        return
+    end
+    if os.getenv("FORKTEST_BOOKMARKS") then
+        -- Bookmarks for ink: one per piece, at a valid position with a real
+        -- date; KOReader can still sort them after a font change (issue
+        -- #84's crash); reopening the book keeps one each and replaces an
+        -- older version's; turning them off removes them.
+        local out = os.getenv("FORKTEST_BOOKMARKS")
+        local ReaderUI = require("apps/reader/readerui")
+        local p, doc, file = self.ui.pencil, self.ui.document, self.ui.document.file
+        local phase_file = out .. ".phase"
+        local function load()
+            local f = io.open(out, "r"); local r = f and JSON.decode(f:read("*a")) or { checks = {} }; if f then f:close() end
+            return r
+        end
+        local function save(r) local f = io.open(out, "w"); f:write(JSON.encode(r)); f:close() end
+        local function check(r, name, ok, detail) table.insert(r.checks, { name = name, ok = ok and true or false, detail = detail }) end
+        local function pencilMarks()
+            local list = {}
+            for _, a in ipairs(self.ui.annotation.annotations) do
+                if a.pencil_group or (type(a.datetime) == "string" and a.datetime:match("^pencil_")) then
+                    table.insert(list, a)
+                end
+            end
+            return list
+        end
+        local function sorts()
+            local copy = {}
+            for i, a in ipairs(self.ui.annotation.annotations) do copy[i] = a end
+            return pcall(self.ui.annotation.sortItems, self.ui.annotation, copy)
+        end
+        G_reader_settings:saveSetting("pencil_annotation_enabled", true)
+        UIManager:scheduleIn(1, function()
+            for i = #UIManager._window_stack, 1, -1 do
+                local w = UIManager._window_stack[i].widget
+                if w ~= self.ui then UIManager:close(w) end
+            end
+            if not io.open(phase_file, "r") then
+                p.bookmark_sync = true
+                p:saveSettings()
+                self.ui:handleEvent(Event:new("GotoPage", 40))
+                UIManager:scheduleIn(2, function()
+                    p:capturePage()
+                    draw(p, { { 960, 300 }, { 1000, 310 } })
+                    draw(p, { { 965, 330 }, { 1005, 340 } })
+                    draw(p, { { 900, 1200 }, { 950, 1210 } })
+                    p:saveStrokes()
+                    p:syncAllBookmarks()
+                    local r = { checks = {} }
+                    local marks = pencilMarks()
+                    r.groups, r.bookmarks = #p.annotation_groups, #marks
+                    check(r, "a bookmark for each piece of ink", #marks == #p.annotation_groups and #marks >= 2, { groups = #p.annotation_groups, marks = #marks })
+                    local good = #marks > 0
+                    for _, m in ipairs(marks) do
+                        good = good and m.pencil_group ~= nil and doc:isXPointerInDocument(m.page)
+                            and m.datetime:match("^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d$") ~= nil
+                            and not m.text:find("%d")
+                    end
+                    check(r, "each at a valid position, with a real date and no page number", good, marks[1])
+                    local size0 = doc.configurable.font_size
+                    self.ui:handleEvent(Event:new("SetFontSize", size0 + 14))
+                    UIManager:scheduleIn(3, function()
+                        p:syncAllBookmarks()
+                        check(r, "KOReader can still sort them after a font change", sorts())
+                        check(r, "still one each", #pencilMarks() == r.groups, #pencilMarks())
+                        -- An older version's bookmark: its group id as the date.
+                        local legacy = { page = doc:getPageXPointer(1), datetime = p.annotation_groups[1].id, text = "Pencil annotation on page 40" }
+                        self.ui.annotation:addItem(legacy)
+                        save(r)
+                        local f = io.open(phase_file, "w"); f:write("2"); f:close()
+                        UIManager:scheduleIn(0.5, function()
+                            self.ui:onClose()
+                            ReaderUI:showReader(file)
+                        end)
+                    end)
+                end)
+            else
+                UIManager:scheduleIn(2, function()
+                    local r = load()
+                    local marks = pencilMarks()
+                    local legacy = 0
+                    for _, m in ipairs(marks) do if not m.pencil_group then legacy = legacy + 1 end end
+                    check(r, "the book reopens with one bookmark each", #marks == r.groups, #marks)
+                    check(r, "an older version's bookmark is replaced", legacy == 0, legacy)
+                    check(r, "and they sort", sorts())
+                    p.bookmark_sync = false
+                    p:removeAllPencilBookmarks()
+                    check(r, "turned off, they're gone", #pencilMarks() == 0, #pencilMarks())
+                    save(r)
+                    UIManager:quit()
+                end)
+            end
         end)
         return
     end

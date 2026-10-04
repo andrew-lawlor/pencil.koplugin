@@ -54,7 +54,8 @@ Your ink is upgraded the first time the fork saves each book's strokes: nothing 
 
 - **Pen tip**: Draw annotations on your ebooks
 - **Eraser end**: Flip your stylus over to erase strokes instantly
-- **Pen menu**: Choose the tool (pen, highlight or eraser), the pen's colour and its width. Open it from a gesture you choose (below), or from the Pencil menu
+- **Pen menu**: Choose the tool (pen, highlight or eraser), the pen's colour and its width. Open it from a gesture you choose (below), or from the Pencil menu. Holding the pen still can open it too, if you turn that on (**Pencil menu > Open the pen menu by holding the pen still**); it's off by default because a pause while writing opens it as well
+- **Bookmarks for your ink**: Each piece of ink is listed in KOReader's Bookmarks menu, so you can go back to the pages you wrote on; tap one to see a picture of it. Off by default; **Pencil menu > Bookmarks for your ink**. Turning it off removes them
 - **Highlight text**: With the Highlight tool, drag the pen across text to make a KOReader highlight, as with a long press and Highlight
 - **Highlighter**: Hold the stylus side button and draw for a highlighter stroke; tap the side button to toggle pencil/eraser
 - **Swap Eraser/Highlighter**: Reassign which side button acts as eraser vs. highlighter from the menu
@@ -82,29 +83,6 @@ Your ink is upgraded the first time the fork saves each book's strokes: nothing 
 
 If you have any questions or a feature request, please submit an issue in this repo.
 If you're experiencing issues with the plugin, please enable input debug mode in the Pencil menu, reproduce the issue, and include the debug log file in your issue report.
-
-## Experimental Features
-
-Some features are still in development and are hidden behind an experimental toggle. You can find them under **Pencil menu > Experimental**.
-
-(The original's colour and width pickers, opened by holding the pen still, are now the pen menu. Holding the pen still can still open it: **Pencil menu > Open the pen menu by holding the pen still**, off by default because a pause while writing opens it too.)
-
-### Bookmark Sync
-
-When enabled, the plugin automatically groups your pencil strokes into logical annotations (based on timing and proximity) and creates KOReader bookmarks for each one. This means annotated pages show up in the **Bookmarks menu**, so you can quickly navigate back to pages you've written on.
-
-**To enable:** Pencil menu > Experimental > Bookmark sync
-
-**What happens when you turn it on:**
-- Existing pencil annotations are grouped and bookmarks are created immediately
-- New strokes are grouped and bookmarked as you draw
-- Bookmarks appear in KOReader's Bookmarks menu as "Pencil annotation on page X"
-- Erasing or undoing strokes updates the bookmarks automatically
-
-**What happens when you turn it off:**
-- All pencil bookmarks are removed from the Bookmarks menu
-- Your pencil strokes and drawings are not affected — only the bookmarks are removed
-- Annotation groups are still tracked internally, so you won't lose any grouping data if you turn it back on
 
 ## Markup export
 
