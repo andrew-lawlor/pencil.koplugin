@@ -87,7 +87,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.3"
+local PLUGIN_VERSION = "0.6.4"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -4421,8 +4421,76 @@ function Pencil:getStrokesFilePath()
     return nil
 end
 
+-- Where this book's ink was last kept, in the book's own settings: when
+-- KOReader renames or copies a book, it writes those settings to a new
+-- folder but leaves the plugin's files in the old one (from upstream PR #86,
+-- by bateast, for issue #84). Everything the plugin keeps beside a book:
+local DATA_LOCATION_SETTING = "pencil_data_location"
+local DATA_ENTRIES = { "pencil_strokes.lua", "pencil_images", "pencil" }
+
+-- Copies a file or a folder and everything in it.
+local function copyTree(from, to)
+    if lfs.attributes(from, "mode") ~= "directory" then
+        return copyFile(from, to)
+    end
+    if not mkdirs(to) then return false end
+    local ok = true
+    for entry in lfs.dir(from) do
+        if entry ~= "." and entry ~= ".." then
+            ok = copyTree(from .. "/" .. entry, to .. "/" .. entry) and ok
+        end
+    end
+    return ok
+end
+
+-- Notes where this book's ink lives, and for which file.
+function Pencil:rememberDataLocation()
+    local settings = self.ui and self.ui.doc_settings
+    local dir = settings and settings.doc_sidecar_dir
+    local doc = self.ui and self.ui.document and self.ui.document.file
+    if dir and doc then
+        settings:saveSetting(DATA_LOCATION_SETTING, { dir = dir, doc = doc })
+    end
+end
+
+-- Brings the ink to this book's folder when it was left in another: the
+-- book was renamed or moved (the old file is gone: the ink moves, and the
+-- old folder goes if nothing else is in it), or copied (the original is
+-- still there: the ink is copied, and the original keeps its own).
+function Pencil:recoverDataAfterRename()
+    local settings = self.ui and self.ui.doc_settings
+    local dir = settings and settings.doc_sidecar_dir
+    if not dir then return end
+    local was = settings:readSetting(DATA_LOCATION_SETTING)
+    if type(was) ~= "table" or type(was.dir) ~= "string" or was.dir == dir then return end
+    if lfs.attributes(dir .. "/pencil_strokes.lua", "mode") == "file"
+            or lfs.attributes(was.dir .. "/pencil_strokes.lua", "mode") ~= "file" then
+        return
+    end
+    local copy = type(was.doc) == "string" and lfs.attributes(was.doc, "mode") == "file"
+    if not mkdirs(dir) then
+        logger.warn("Pencil: can't create", dir, "to bring the ink from", was.dir)
+        return
+    end
+    for _, name in ipairs(DATA_ENTRIES) do
+        local from, to = was.dir .. "/" .. name, dir .. "/" .. name
+        if lfs.attributes(from) and not lfs.attributes(to) then
+            -- A move that fails (another filesystem) copies instead, and
+            -- leaves the old files where they were.
+            if copy or not os.rename(from, to) then
+                if not copyTree(from, to) then
+                    logger.warn("Pencil: couldn't copy", from, "to", to)
+                end
+            end
+        end
+    end
+    if not copy then lfs.rmdir(was.dir) end
+    logger.info("Pencil:", copy and "copied" or "moved", "the ink from", was.dir, "to", dir)
+end
+
 -- Load strokes from our own file
 function Pencil:loadStrokes()
+    self:recoverDataAfterRename()
     local filepath = self:getStrokesFilePath()
     logger.info("Pencil: loadStrokes - filepath =", filepath)
 
@@ -4476,6 +4544,7 @@ function Pencil:loadStrokes()
         end
 
         self.strokes_loaded = true
+        self:rememberDataLocation()
         logger.info("Pencil: loaded", #self.strokes, "strokes from", filepath)
     else
         logger.warn("Pencil: failed to load strokes from", filepath, "error:", data)
@@ -4613,6 +4682,7 @@ function Pencil:saveStrokes()
     if f then
         f:write("return " .. require("dump")(data))
         f:close()
+        self:rememberDataLocation()
         logger.info("Pencil: saved", #self.strokes, "strokes to", filepath)
     else
         logger.err("Pencil: failed to open file for writing:", filepath, "error:", err)
