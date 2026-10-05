@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- The exported word list now records what's printed between each word and the next (`after` in `words.json`). Without it, a passage rebuilt from the words lost its punctuation and split words at hyphens and apostrophes: "Nestor’s" came out as "Nestor s", "ocean-side" as "ocean side". Found in the Kobo/KOReader benchmark.
+
 - Ink written on one page in one sitting could be exported as two markups. KOReader sometimes updates a page without it changing (a re-render, a menu closing over it), and the plugin took that as leaving the page. A visit now ends only when the page, or the layout, actually changes; the page's picture is kept too.
 
 ## 0.6.5 (2026-10-04)

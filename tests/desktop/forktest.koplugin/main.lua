@@ -665,6 +665,15 @@ function Test:onReaderReady()
             end
             r.underlined = table.concat(under, " ")
             r.words = #words
+            -- The words and what's between them make up the page's text,
+            -- punctuation and all.
+            local rebuilt = ""
+            for k, w in ipairs(words) do rebuilt = rebuilt .. w.text .. (k < #words and (w.after or "?") or "") end
+            local norm = function(t) return (t:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")) end
+            local truth = doc:getTextFromXPointers(words[1].pos0, words[#words].pos1)
+            r.rebuilt_sample = norm(rebuilt):sub(1, 120)
+            check("words and what's between them rebuild the page exactly", norm(rebuilt) == norm(truth),
+                { rebuilt = norm(rebuilt):sub(1, 200), truth = norm(truth):sub(1, 200) })
             self.ui:handleEvent(Event:new("GotoPage", 41))
         end,
         function()

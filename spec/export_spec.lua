@@ -60,25 +60,31 @@ describe("Export", function()
 
 end)
 
--- A document of words laid out three to a line, 100 px wide and 40 tall.
-local function fakeDoc(texts, on_screen_from, on_screen_to)
+-- A document of words laid out three to a line, 100 px wide and 40 tall, all
+-- in one text node. Word i starts at offset 10i and ends at 10i + 1.
+local function fakeDoc(texts, on_screen_from, on_screen_to, seps)
     local doc = { _document = {} }
-    local function xp(i) return "w" .. i end
-    local function idx(p) return tonumber(p:match("%d+")) end
+    local function xp(i, at_end) return "/body/p/text()." .. (i * 10 + (at_end and 1 or 0)) end
+    local function idx(p) return math.floor(tonumber(p:match("(%d+)$")) / 10) end
+    local function isEnd(p) return tonumber(p:match("(%d+)$")) % 10 == 1 end
     function doc:getTextFromPositions() return { pos0 = xp(on_screen_from), pos1 = xp(on_screen_to) } end
     function doc:getPrevVisibleChar(p) return p end
     function doc:getNextVisibleWordStart(p)
         local i = idx(p)
-        if p:sub(1, 1) == "e" then i = i + 1 end
+        if isEnd(p) then i = i + 1 end
         return i <= #texts and xp(i) or nil
     end
-    function doc:getNextVisibleWordEnd(p) return "e" .. idx(p) end
+    function doc:getNextVisibleWordEnd(p) return xp(idx(p), true) end
     function doc:compareXPointers(a, b)
         local ia, ib = idx(a), idx(b)
         if ia == ib then return 0 end
         return ib > ia and 1 or -1
     end
-    function doc:getTextFromXPointers(a) return texts[idx(a)] end
+    function doc:getTextFromXPointers(a)
+        -- From a word's end: what's printed before the next word.
+        if isEnd(a) then return (seps or {})[idx(a)] or " " end
+        return texts[idx(a)]
+    end
     function doc._document:getWordBoxesFromPositions(a)
         local i = idx(a) - 1
         local x, y = (i % 3) * 110, math.floor(i / 3) * 50
@@ -96,8 +102,37 @@ describe("Words", function()
         for k, w in ipairs(words) do texts[k] = w.text end
         assert.same({ "O", "Muse", "of", "the", "man" }, texts)
         assert.same({ 110, 0, 210, 40 }, words[1].boxes[1])
-        assert.equals("w2", first)
-        assert.equals("w6", last)
+        assert.equals("/body/p/text().20", first)
+        assert.equals("/body/p/text().60", last)
+    end)
+
+    it("records what's printed between words, to rebuild a passage exactly", function()
+        local doc = fakeDoc({ "Nestor", "s", "son", "ocean", "side" }, 1, 5,
+            { "’", " ", ", ", "-", "" })
+        local words = Words.onScreen(doc, 1000, 1000)
+        local passage = ""
+        for k, w in ipairs(words) do
+            passage = passage .. w.text .. (k < #words and w.after or "")
+        end
+        assert.equals("Nestor’s son, ocean-side", passage)
+        -- Nothing printed between words in different text nodes (two lines
+        -- of verse) still means they're apart.
+        local verse = fakeDoc({ "path", "Ulysses" }, 1, 2, { "" })
+        function verse:getNextVisibleWordStart(p)
+            if p == "/body/p/text().11" then return "/body/p[2]/text().0" end
+            if p == "/body/p/text().10" or p == "/body/p/text().0" then return "/body/p/text().10" end
+            return nil
+        end
+        function verse:getNextVisibleWordEnd(p)
+            return p == "/body/p[2]/text().0" and "/body/p[2]/text().5" or "/body/p/text().11"
+        end
+        function verse:getTextFromXPointers(a)
+            if a == "/body/p/text().11" then return "" end
+            return a == "/body/p[2]/text().0" and "Ulysses" or "path"
+        end
+        function verse:compareXPointers() return 1 end
+        local lines = Words.onScreen(verse, 1000, 1000)
+        assert.equals(" ", lines[1].after)
     end)
 
     it("finds the word nearest a point, favouring its own line", function()

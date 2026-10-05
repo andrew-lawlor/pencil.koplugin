@@ -61,13 +61,13 @@ The whole screen, as KOReader drew it, in 8-bit grey, without the plugin's ink. 
 
 ```json
 { "format": 1, "words": [
-  { "text": "fatal", "boxes": [[402, 873, 466, 905]],
+  { "text": "fatal", "after": " ", "boxes": [[402, 873, 466, 905]],
     "pos0": "/body/DocFragment[9]/body/div/div/p[18]/text().31",
     "pos1": "/body/DocFragment[9]/body/div/div/p[18]/text().36" }
 ] }
 ```
 
-Every word on screen, in reading order. `boxes` holds one `[x0, y0, x1, y1]` box per line the word is on: a word hyphenated across two lines has two. `pos0` and `pos1` are the word's start and end in the book.
+Every word on screen, in reading order. `boxes` holds one `[x0, y0, x1, y1]` box per line the word is on: a word hyphenated across two lines has two. `pos0` and `pos1` are the word's start and end in the book. `after` is what's printed between the word and the next: a space, `", "`, `"-"`, `"’"`. Words are split at hyphens and apostrophes ("ocean", "side"; "Nestor", "s"), so join a passage with `after`, not spaces, to get its text exactly. Older exports (before 0.6.6) have no `after`; join those with spaces.
 
 With the boxes, you can tell which words a stroke underlines or circles from the geometry alone, without reading `page.png`.
 

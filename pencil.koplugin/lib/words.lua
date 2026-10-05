@@ -13,9 +13,17 @@ so it can be tested with a fake.
 
 local Words = {}
 
+-- The text node an XPointer is in (the path without its offset).
+local function nodeOf(xp)
+    return xp and (xp:match("^(.*)%.%d+$") or xp)
+end
+
 --- Every word on a `width` × `height` screen of `doc`, in reading order:
--- { text, boxes = { {x0, y0, x1, y1}, ... } (one per line the word is on),
--- pos0, pos1 }. Also returns the first and last positions on screen.
+-- { text, after, boxes = { {x0, y0, x1, y1}, ... } (one per line the word is
+-- on), pos0, pos1 }. `after` is what's printed between it and the next word
+-- (a space, ", ", "-", "’"), so a passage can be put back together exactly:
+-- the word walk splits "Nestor’s" and "ocean-side" in two. Also returns the
+-- first and last positions on screen.
 function Words.onScreen(doc, width, height)
     local visible = doc:getTextFromPositions({ x = 0, y = 0 }, { x = width, y = height }, true)
     local first, last = visible and visible.pos0, visible and visible.pos1
@@ -36,10 +44,16 @@ function Words.onScreen(doc, width, height)
         for _, b in ipairs(raw) do
             table.insert(boxes, { b.x0, b.y0, b.x1, b.y1 })
         end
-        if text and text ~= "" and #boxes > 0 then
-            table.insert(words, { text = text, boxes = boxes, pos0 = ws, pos1 = we })
-        end
         local nxt = doc:getNextVisibleWordStart(we)
+        if text and text ~= "" and #boxes > 0 then
+            local after = nxt and doc:getTextFromXPointers(we, nxt) or ""
+            -- Words in different text nodes (another line of verse, another
+            -- paragraph) are apart even with nothing printed between them.
+            if nxt and not after:find("%s") and nodeOf(we) ~= nodeOf(nxt) then
+                after = after .. " "
+            end
+            table.insert(words, { text = text, after = after, boxes = boxes, pos0 = ws, pos1 = we })
+        end
         if not nxt or nxt == ws then break end
         ws = nxt
     end
