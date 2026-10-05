@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.6 (unreleased)
+
+### Fixed
+
+- Ink written on one page in one sitting could be exported as two markups. KOReader sometimes updates a page without it changing (a re-render, a menu closing over it), and the plugin took that as leaving the page. A visit now ends only when the page, or the layout, actually changes; the page's picture is kept too.
+
 ## 0.6.5 (2026-10-04)
 
 ### Changed

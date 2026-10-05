@@ -88,7 +88,7 @@ local IMAGE_BADGE_MARGIN_GAP = 5         -- gap from text/screen edge for margin
 local _active_pencil = nil
 
 -- Written into each markup export, so readers know what made it.
-local PLUGIN_VERSION = "0.6.5"
+local PLUGIN_VERSION = "0.6.6"
 -- Nothing slow happens while writing (KOReader runs on one thread, so any
 -- work freezes the pen). The page picture and its words are taken shortly
 -- after arriving on a page, inside the page turn's own refresh; if the pen
@@ -4130,7 +4130,7 @@ end
 function Pencil:assignMarkup(stroke)
     if not stroke or stroke.markup then return end
     if not self.visit or self.visit.page ~= stroke.page then
-        self.visit = { id = PencilExport.markupId(stroke), page = stroke.page }
+        self.visit = { id = PencilExport.markupId(stroke), page = stroke.page, layout = self:layoutKey() }
     end
     stroke.markup = self.visit.id
     if self.page_capture and self.page_capture.page == stroke.page then
@@ -4864,11 +4864,21 @@ function Pencil:onPageUpdate(pageno)
     self.current_stroke = nil
     self.eraser_deleted = nil
     -- Leaving a page ends its visit: writing here again starts a new markup.
-    self.visit = nil
-    self:releasePageCapture()
+    -- KOReader also sends PageUpdate without the page changing (a re-render,
+    -- a menu closing over it): then the visit and the page's picture carry
+    -- on. A page is the same only in the same layout: after a font change
+    -- the number can stay while the text moves.
+    local page, key = pageno or self:getCurrentPage(), self:layoutKey()
+    if not (self.visit and self.visit.page == page and self.visit.layout == key) then
+        self.visit = nil
+    end
     self:cancelIdleExport()
-    if self:isEnabled() then
-        self:schedulePageCapture(PAGE_CAPTURE_DELAY_S)
+    local capture = self.page_capture
+    if not (capture and capture.page == page and capture.layout_key == key) then
+        self:releasePageCapture()
+        if self:isEnabled() then
+            self:schedulePageCapture(PAGE_CAPTURE_DELAY_S)
+        end
     end
     if next(self.markup_captures) then
         self:scheduleIdleExport()

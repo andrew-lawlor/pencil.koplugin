@@ -630,6 +630,9 @@ function Test:onReaderReady()
             -- Underline the second line ("Laertes, when his fatal hour…") and
             -- write a short note in the right margin.
             draw(p, { { 18, 132 }, { 300, 133 }, { 600, 134 } })
+            -- KOReader sends this without leaving the page (a re-render, a
+            -- menu closing): still the same visit, the same markup.
+            self.ui:handleEvent(Event:new("PageUpdate", p:getCurrentPage()))
             draw(p, { { 960, 300 }, { 1000, 310 } })
             draw(p, { { 965, 330 }, { 1005, 340 } })
         end,
@@ -643,7 +646,7 @@ function Test:onReaderReady()
             check("margin note anchored beside it", note.anchor and math.abs(note.anchor.dy) < 1.5, note.anchor)
             p:saveStrokes(); p:syncMarkups()
             local f = folders(dir)
-            check("one markup folder", #f == 1, f)
+            check("one markup folder, though KOReader updated the page mid-way", #f == 1, f)
             local m = dir .. "/" .. (f[1] or "")
             r.page40 = f[1]
             for _, name in ipairs({ "markup.json", "ink.json", "page.png", "words.json" }) do
